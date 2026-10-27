@@ -78,6 +78,7 @@ import { recordTypedPageBodySnapshot } from './tracker/typedPageBodyHistory';
 import { getRegisteredExtensions } from '../extensions/RegisteredFileTypes';
 import { isPathInWorkspace, getRelativeWorkspacePath } from '../utils/workspaceDetection';
 import { syncTrackerItem, unsyncTrackerItem, isTrackerSyncActive } from './TrackerSyncManager';
+import { notifyCardChanged } from './cardSessionTitleFollower';
 import {
   getEffectiveTrackerSharingPolicy,
   getInitialTrackerSyncStatus,
@@ -2126,6 +2127,7 @@ export class ElectronDocumentService implements DocumentService {
       timestamp: new Date(),
     };
     this.trackerItemWatchers.forEach(callback => callback(changeEvent));
+    notifyCardChanged({ trackerIds: [itemId, row.id], title: updated.title, issueKey: updated.issueKey });
 
     return updated;
   }

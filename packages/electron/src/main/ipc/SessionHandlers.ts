@@ -12,9 +12,8 @@ import {
 } from '@nimbalyst/runtime/ai/server/types';
 import type { UpdateSessionMetadataPayload } from '@nimbalyst/runtime/ai/adapters/sessionStore';
 import {
-    NAMING_MODE_METADATA_KEY,
     normalizeCardSessionIdentity,
-    readSessionNamingMode,
+    userRenameMetadata,
 } from '@nimbalyst/runtime/ai/server/cardSessionNaming';
 import path from "path";
 import { BrowserWindow } from 'electron';
@@ -33,6 +32,8 @@ import { inheritedOwnership, stripOwnerControlledMetadata } from '../services/ex
 import { readSessionSubtree } from '../services/sessionHierarchy';
 import { isLocalWikiItemId } from '../services/localWiki/localWikiItemIds';
 import { createTrailingSingleFlight } from '../utils/asyncCache';
+import { CARD_SESSIONS_QUERY, notifyCardChanged, setCardSessionTitleFollowerDeps } from '../services/cardSessionTitleFollower';
+import { onTrackerItemApplied } from '../services/TrackerSyncManager';
 
 // Several listeners refresh the list on one event; eight identical calls in the
 // same millisecond each materialized every session row before the OOM abort.
@@ -220,6 +221,31 @@ export async function registerSessionHandlers() {
     // Initialize session manager
     await sessionManager.initialize();
 
+    // Card-named sessions follow their primary card's title and issue key.
+    setCardSessionTitleFollowerDeps({
+        listCardSessions: async () => {
+            const { rows } = await database.query<{ id: string; metadata: unknown }>(CARD_SESSIONS_QUERY);
+            return rows;
+        },
+        setCardIdentity: (sessionId, identity) => sessionManager.setCardIdentity(sessionId, identity),
+        notifyTitle: (sessionId, title) => {
+            for (const window of BrowserWindow.getAllWindows()) {
+                if (!window.isDestroyed()) {
+                    window.webContents.send('sessions:session-updated', sessionId, { title });
+                }
+            }
+        },
+    });
+    // Remote edits and server-assigned issue keys arrive here.
+    onTrackerItemApplied((_workspacePath, applied) => {
+        if (applied.isTombstone) return;
+        notifyCardChanged({
+            trackerIds: [applied.itemId],
+            title: applied.payload?.fields?.title,
+            issueKey: applied.issueKey ?? applied.payload?.issueKey,
+        });
+    });
+
     // Create session
     safeHandle('session:create', async (event, filePath: string, type: string, source?: any) => {
         const documentContext = filePath ? { content: '', filePath } : undefined;
@@ -395,8 +421,9 @@ export async function registerSessionHandlers() {
                 // rename: lock out auto-naming, and keep a card-named session's
                 // card identity while switching it to the custom name.
                 updates.hasBeenNamed = true;
-                if (readSessionNamingMode(currentSession.metadata) === 'card') {
-                    updates.metadata = { ...updates.metadata, [NAMING_MODE_METADATA_KEY]: 'custom' };
+                const renameMetadata = userRenameMetadata(currentSession.metadata);
+                if (renameMetadata) {
+                    updates.metadata = { ...updates.metadata, ...renameMetadata };
                 }
             }
             await AISessionsRepository.updateMetadata(sessionId, updates);

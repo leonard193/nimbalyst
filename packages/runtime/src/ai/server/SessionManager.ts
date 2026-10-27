@@ -35,6 +35,7 @@ import {
   CARD_IDENTITY_METADATA_KEY,
   NAMING_MODE_METADATA_KEY,
   readSessionNamingMode,
+  userRenameMetadata,
   type CardSessionIdentity,
   type SessionTitleSource,
 } from './cardSessionNaming';
@@ -1256,9 +1257,9 @@ export class SessionManager {
       if (options.markAsNamed !== undefined) {
         (metadata as any).hasBeenNamed = options.markAsNamed;
       }
-      if (namingMode === 'card' && source === 'user') {
-        // The card identity stays in metadata so the session can return to it.
-        metadata.metadata = { [NAMING_MODE_METADATA_KEY]: 'custom' };
+      const renameMetadata = source === 'user' ? userRenameMetadata(persisted?.metadata) : undefined;
+      if (renameMetadata) {
+        metadata.metadata = renameMetadata;
       }
       await AISessionsRepository.updateMetadata(sessionId, metadata);
     } else {

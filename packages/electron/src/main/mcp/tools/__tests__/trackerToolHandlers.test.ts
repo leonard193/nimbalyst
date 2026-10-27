@@ -206,6 +206,8 @@ vi.mock('../../../services/tracker/localKeyAllocator', () => ({
   assignLocalKeysToRows: vi.fn(async () => new Map<string, string>()),
 }));
 
+import { setCardSessionTitleFollowerDeps } from '../../../services/cardSessionTitleFollower';
+
 import {
   createBidirectionalLink,
   handleTrackerCreate,
@@ -3270,5 +3272,81 @@ describe('agent writes that would make a shared item too large for its room', ()
 
   it('tracker_add_comment refuses a comment body', async () => {
     expectRefusedBeforeAnyWrite(await handleTrackerAddComment({ trackerId: 'NIM-1', body: huge }, '/tmp/ws'));
+  });
+});
+
+describe('handleTrackerLinkSession with a purpose', () => {
+  const setCardIdentity = vi.fn(async (_sessionId: string, identity: { cardTitle: string; purpose: string }) =>
+    `${identity.cardTitle} — ${identity.purpose}`);
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockDocumentServices.clear();
+    setCardSessionTitleFollowerDeps({
+      listCardSessions: async () => [],
+      setCardIdentity,
+      notifyTitle: vi.fn(),
+    });
+  });
+
+  afterEach(() => {
+    setCardSessionTitleFollowerDeps(null);
+  });
+
+  function queueLinkQueries(sessionMetadata: Record<string, unknown>) {
+    const trackerRow = makeRow({ id: 'bug_target', workspace: '/tmp/ws' });
+    mockQuery
+      .mockResolvedValueOnce({ rows: [trackerRow] })                              // resolveTrackerRowByReference
+      .mockResolvedValueOnce({ rows: [{ data: {} }] })                            // SELECT data
+      .mockResolvedValueOnce({ rows: [] })                                        // UPDATE tracker_items
+      .mockResolvedValueOnce({ rows: [{ metadata: sessionMetadata }] })           // SELECT metadata
+      .mockResolvedValueOnce({ rows: [] })                                        // UPDATE ai_sessions
+      .mockResolvedValueOnce({ rows: [{ data: { linkedSessions: ['session_review'] } }] }) // post-link tracker read
+      .mockResolvedValueOnce({ rows: [trackerRow] })                              // notifyTrackerItemUpdated
+      .mockResolvedValueOnce({ rows: [{ metadata: { ...sessionMetadata, linkedTrackerItemIds: ['bug_target'] } }] });
+  }
+
+  it('makes the linked item the primary card of a review chat', async () => {
+    queueLinkQueries({});
+
+    const result = await handleTrackerLinkSession(
+      { trackerId: 'NIM-1', purpose: 'Independent review' },
+      'session_review',
+      '/tmp/ws',
+    );
+
+    expect(result.isError).toBe(false);
+    expect(setCardIdentity).toHaveBeenCalledWith('session_review', expect.objectContaining({
+      primaryTrackerId: 'bug_target',
+      cardTitle: 'Scoped bug',
+      purpose: 'Independent review',
+    }));
+    expect(JSON.parse(result.content[0].text!).summary).toContain('Session name now follows this card');
+  });
+
+  // Linking a second card never reassigns the primary role.
+  it('keeps a different existing primary card', async () => {
+    queueLinkQueries({
+      namingMode: 'card',
+      cardIdentity: { primaryTrackerId: 'task_other', cardTitle: 'Other card', purpose: 'Implementation' },
+    });
+
+    const result = await handleTrackerLinkSession(
+      { trackerId: 'NIM-1', purpose: 'Independent review' },
+      'session_review',
+      '/tmp/ws',
+    );
+
+    expect(result.isError).toBe(false);
+    expect(setCardIdentity).not.toHaveBeenCalled();
+    expect(JSON.parse(result.content[0].text!).summary).toContain('its primary card is task_other');
+  });
+
+  it('only links when no purpose is given', async () => {
+    queueLinkQueries({});
+
+    await handleTrackerLinkSession({ trackerId: 'NIM-1' }, 'session_review', '/tmp/ws');
+
+    expect(setCardIdentity).not.toHaveBeenCalled();
   });
 });

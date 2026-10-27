@@ -14,6 +14,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { SQLiteDatabase } from '../SQLiteDatabase';
 import { createSQLiteStoreAdapter } from '../SQLiteStoreAdapter';
+import { CARD_SESSIONS_QUERY } from '../../../services/cardSessionTitleFollower';
 
 const SCHEMA_DIR = path.resolve(__dirname, '../schemas');
 
@@ -346,5 +347,29 @@ describe('SQLiteStoreAdapter', () => {
     expect(hits.length).toBe(1);
     // Lower bm25 = better match in FTS5.
     expect(hits[0].rank).toBeLessThan(0);
+  });
+
+  // The card-session title follower filters on a JSON key in the WHERE clause.
+  it('finds card-named sessions by a metadata key', async () => {
+    const adapter = createSQLiteStoreAdapter(db);
+    const card = { namingMode: 'card', cardIdentity: { primaryTrackerId: 't1', cardTitle: 'Card', purpose: 'Implementation' } };
+    await adapter.query(
+      `INSERT INTO ai_sessions (id, workspace_id, title, provider, metadata) VALUES ($1, $2, $3, $4, $5)`,
+      ['card', 'ws1', 'Card — Implementation', 'claude', JSON.stringify(card)],
+    );
+    await adapter.query(
+      `INSERT INTO ai_sessions (id, workspace_id, title, provider, metadata) VALUES ($1, $2, $3, $4, $5)`,
+      ['custom', 'ws1', 'Mine', 'claude', JSON.stringify({ ...card, namingMode: 'custom' })],
+    );
+    await adapter.query(
+      `INSERT INTO ai_sessions (id, workspace_id, title, provider) VALUES ($1, $2, $3, $4)`,
+      ['plain', 'ws1', 'Plain', 'claude'],
+    );
+
+    const { rows } = await adapter.query<{ id: string; metadata: unknown }>(CARD_SESSIONS_QUERY);
+
+    expect(rows.map((row) => row.id)).toEqual(['card']);
+    const metadata = typeof rows[0].metadata === 'string' ? JSON.parse(rows[0].metadata) : rows[0].metadata;
+    expect(metadata.cardIdentity.primaryTrackerId).toBe('t1');
   });
 });

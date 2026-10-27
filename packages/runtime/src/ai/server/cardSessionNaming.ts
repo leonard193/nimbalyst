@@ -127,3 +127,14 @@ export function canWriteSessionTitle(mode: SessionNamingMode | undefined, source
   if (!mode) return true;
   return source === 'user';
 }
+
+/**
+ * Metadata to merge when the user renames a session: a card-named session
+ * becomes custom-named and keeps its card identity, so it can return to the
+ * card name later. Undefined for every other session.
+ */
+export function userRenameMetadata(currentMetadata: unknown): Record<string, unknown> | undefined {
+  return readSessionNamingMode(currentMetadata) === 'card'
+    ? { [NAMING_MODE_METADATA_KEY]: 'custom' }
+    : undefined;
+}

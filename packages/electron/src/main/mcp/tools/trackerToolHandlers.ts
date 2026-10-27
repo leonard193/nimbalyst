@@ -83,6 +83,8 @@ import {
   type BodyWriteFailure,
   type McpToolResult,
 } from './trackerToolResult';
+import { notifyCardChanged, setPrimaryCard } from '../../services/cardSessionTitleFollower';
+import { normalizeCardSessionIdentity } from '@nimbalyst/runtime/ai/server/cardSessionNaming';
 
 export {
   handleTrackerDefineType,
@@ -959,6 +961,10 @@ export const trackerToolSchemas = [
         sessionId: {
           type: "string",
           description: "Optional. The AI session ID to link to the tracker item. Defaults to the current session if omitted.",
+        },
+        purpose: {
+          type: "string",
+          description: "Optional. Make this item the session's primary card and name the session '<key> · <title> — <purpose>' (e.g. 'Independent review'). The name then follows the card. Refused if the session already has a different primary card.",
         },
       },
       required: ["trackerId"],
@@ -2478,6 +2484,11 @@ export async function handleTrackerUpdate(
         if (row) {
           await notifyTrackerItemUpdated(workspacePath, row.id);
         }
+        notifyCardChanged({
+          trackerIds: [publicTrackerId, storageRowId, refreshedItem.id],
+          title: refreshedItem.title,
+          issueKey: refreshedItem.issueKey,
+        });
 
         if (row && workspacePath) {
           const sharingPolicy = getEffectiveTrackerSharingPolicy(workspacePath, refreshedItem.type, globalRegistry.get(refreshedItem.type));
@@ -3086,6 +3097,26 @@ export async function handleTrackerLinkSession(
         issueKey: item.issueKey ?? existing.issue_key ?? undefined,
         localKey: item.localKey ?? existing.local_key ?? undefined,
       };
+
+      let primaryCardNote = "";
+      const purpose = typeof args.purpose === "string" ? args.purpose.trim() : "";
+      if (purpose) {
+        const primary = await setPrimaryCard(
+          targetSessionId,
+          normalizeCardSessionIdentity({
+            primaryTrackerId: item.id,
+            issueKey: getAssignedIssueKey(linkedRef),
+            cardTitle: item.title || trackerData.title || item.id,
+            purpose,
+          }),
+          sessionResult.rows[0]?.metadata,
+        );
+        primaryCardNote = primary.applied
+          ? ` Session name now follows this card: "${primary.title}".`
+          : primary.reason === "other-primary-card"
+            ? ` Session name unchanged: its primary card is ${primary.primaryTrackerId}; only the user can change it.`
+            : " Session name unchanged: card naming is unavailable.";
+      }
       const structured = {
         action: "linked" as const,
         trackerId: item.id,
@@ -3105,7 +3136,7 @@ export async function handleTrackerLinkSession(
             type: "text",
             text: JSON.stringify({
               structured,
-              summary: `Linked session ${targetSessionId} to tracker item ${getTrackerDisplayRef(linkedRef)}. Total linked sessions: ${linkedSessions.length}${issueKeyAvailabilityNote(linkedRef, { canIssueKeys: isTrackerSyncConfigured(workspacePath) })}`,
+              summary: `Linked session ${targetSessionId} to tracker item ${getTrackerDisplayRef(linkedRef)}. Total linked sessions: ${linkedSessions.length}${issueKeyAvailabilityNote(linkedRef, { canIssueKeys: isTrackerSyncConfigured(workspacePath) })}${primaryCardNote}`,
             }),
           },
         ],

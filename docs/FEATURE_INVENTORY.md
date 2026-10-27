@@ -93,6 +93,7 @@ Twelve built-in provider lanes, plus any agent an extension contributes. Every l
 - Read/unread indicators, with mark-all-read actions for a workstream and the macOS menu bar sessions panel
 - Auto-continue sessions after app restart
 - AI auto-naming of sessions after first turn
+- Card-named sessions -- a session launched from a tracker item (Launch Session or Launch Worktree), or linked by an agent with a purpose (`tracker_link_session` `purpose`), is named `<key> · <item title> — <purpose>` before its first turn and keeps that name: provider summaries, first-prompt titles and agent renames leave it alone, and it follows the item's title edits and the key it gets on publication. Renaming it yourself keeps your name. The naming state is stored on this device only for now
 - Drag-and-drop session reparenting and searchable move actions, with Undo; moves are organizational only and never make a session another session's manager or message either session
 - Session launch history links orchestrating sessions to the sessions they created
 

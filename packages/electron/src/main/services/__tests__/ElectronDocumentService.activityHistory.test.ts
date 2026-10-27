@@ -21,6 +21,10 @@ vi.mock('../MainBodyDocService', () => ({
   applyHeadlessBodyMarkdown: vi.fn(),
 }));
 
+vi.mock('../cardSessionTitleFollower', () => ({
+  notifyCardChanged: vi.fn(),
+}));
+
 vi.mock('../TrackerIdentityService', () => ({
   getCurrentIdentity: () => ({ email: 'human@example.com', displayName: 'Human Editor' }),
 }));
@@ -41,6 +45,7 @@ vi.mock('../../../../../tracker-schema/src/TrackerDataModel', () => ({
 }));
 
 import { ElectronDocumentService } from '../ElectronDocumentService';
+import { notifyCardChanged } from '../cardSessionTitleFollower';
 
 let tempDir: string;
 let service: ElectronDocumentService;
@@ -272,5 +277,22 @@ describe('direct UI tracker activity history', () => {
     expect(activity.at(-1)).toMatchObject({ action: 'status_changed', newValue: 'in-progress' });
     expect(Math.max(...activity.map((e: any) => (e.oldValue ?? '').length))).toBe(500);
     expect(state.row.data.length).toBeLessThan(150_000);
+  });
+});
+
+describe('card-named sessions', () => {
+  // Sessions launched from this card rebuild their title from the new card title.
+  it('reports a title edit to the card session title follower', async () => {
+    const original = nativeRow({ title: 'Old title', status: 'to-do', activity: [] });
+    const persisted = nativeRow({ title: 'New title', status: 'to-do', activity: [] });
+    mockQuery.mockResolvedValueOnce({ rows: [original] });
+    mockQuery.mockResolvedValueOnce({ rows: [persisted] });
+
+    await service.updateTrackerItem('bug-1', { title: 'New title' });
+
+    expect(notifyCardChanged).toHaveBeenCalledWith(expect.objectContaining({
+      trackerIds: expect.arrayContaining(['bug-1']),
+      title: 'New title',
+    }));
   });
 });

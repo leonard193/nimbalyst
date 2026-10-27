@@ -40,6 +40,24 @@ export function isTrackerLaunchForWorkspace(
   return !!context && !!context.workspacePath && context.workspacePath === workspacePath;
 }
 
+/**
+ * Name a just-created session after its card before the first turn. A naming
+ * failure is logged and the launch continues with the creation title.
+ */
+export async function applyTrackerLaunchIdentity(
+  sessionId: string,
+  context: Pick<TrackerLaunchContext, 'cardIdentity'>,
+  invoke: (channel: string, ...args: unknown[]) => Promise<unknown>,
+): Promise<boolean> {
+  try {
+    await invoke('sessions:set-card-identity', sessionId, context.cardIdentity);
+    return true;
+  } catch (err) {
+    console.error('[trackerSessionLaunch] Failed to name session after its card:', err);
+    return false;
+  }
+}
+
 /** Validate at submission: the project can change while the branch picker is open. */
 export async function createTrackerWorktreeSession(
   context: TrackerLaunchContext,

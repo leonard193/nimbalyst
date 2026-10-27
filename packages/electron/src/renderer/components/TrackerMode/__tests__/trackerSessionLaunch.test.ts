@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { TrackerRecord } from '@nimbalyst/runtime/core/TrackerRecord';
 
 import {
+  applyTrackerLaunchIdentity,
   assertTrackerItemInWorkspace,
   buildTrackerLaunchContext,
   createTrackerWorktreeSession,
@@ -168,5 +169,24 @@ describe('deriveTrackerWorktreeName', () => {
     expect(name).toMatch(/^nim-1624-[a-z0-9-]+$/);
     expect(name.length).toBeLessThanOrEqual(64);
     expect(name).not.toMatch(/-$/);
+  });
+});
+
+describe('applyTrackerLaunchIdentity', () => {
+  it('writes the card identity for the new session', async () => {
+    const context = buildTrackerLaunchContext('feature_1624', makeTrackerRecord());
+    const invoke = vi.fn(async () => ({ success: true }));
+
+    await expect(applyTrackerLaunchIdentity('session', context, invoke)).resolves.toBe(true);
+    expect(invoke).toHaveBeenCalledWith('sessions:set-card-identity', 'session', context.cardIdentity);
+  });
+
+  it('does not fail the launch when naming fails', async () => {
+    const context = buildTrackerLaunchContext('feature_1624', makeTrackerRecord());
+    const invoke = vi.fn(async () => { throw new Error('ipc down'); });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await expect(applyTrackerLaunchIdentity('session', context, invoke)).resolves.toBe(false);
+    error.mockRestore();
   });
 });
