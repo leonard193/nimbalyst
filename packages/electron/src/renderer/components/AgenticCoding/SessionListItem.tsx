@@ -13,7 +13,7 @@ import { sessionOrChildProcessingAtom, sessionUnreadAtom, sessionPendingPromptAt
 import { sessionRegistryAtom } from '../../store/atoms/sessions';
 import { SessionContextMenu } from './SessionContextMenu';
 import { FullTitleTooltip } from './FullTitleTooltip';
-import { SessionIdentityLabel } from '../SessionIdentity/SessionIdentityLabel';
+import { SessionIdentityLabel, SessionIdentityPurpose } from '../SessionIdentity/SessionIdentityLabel';
 import { getSessionIdentityDisplay } from '../SessionIdentity/sessionIdentityDisplay';
 import { navigateToTrackerItem } from '../PullRequestMode/trackerNavigation';
 import type { CardSessionIdentity, SessionNamingMode } from '@nimbalyst/runtime/ai/server/cardSessionNaming';
@@ -450,10 +450,12 @@ export const SessionListItem = memo<SessionListItemProps>(function SessionListIt
               label={identityLabel}
               className={`session-list-item-title block text-[0.8125rem] text-[var(--nim-text)] font-medium overflow-hidden text-ellipsis whitespace-nowrap mb-0.5 transition-colors duration-150 ${isActive ? 'font-semibold' : ''} ${isArchived ? 'text-[var(--nim-text-faint)]' : ''}`}
             >
-              <SessionIdentityLabel session={identitySource} onOpenCard={navigateToTrackerItem} untitledLabel="Untitled Session" nativeTitle={false} keyFocusable={false} />
+              <SessionIdentityLabel session={identitySource} onOpenCard={navigateToTrackerItem} untitledLabel="Untitled Session" nativeTitle={false} keyFocusable={false} purposeElsewhere />
             </FullTitleTooltip>
             <div className="session-list-item-meta flex gap-1.5 text-[0.6875rem] text-[var(--nim-text-faint)] items-center mt-0.5">
-              <span className="session-list-item-datetime text-[0.6875rem] text-[var(--nim-text-faint)] whitespace-nowrap transition-colors duration-150" title={fullDateTime}>{relativeTime}</span>
+              {/* The purpose tells chats on one card apart; time and model give way first. */}
+              <SessionIdentityPurpose session={identitySource} className="shrink-0 max-w-full text-[var(--nim-text-muted)]" />
+              <span className={`session-list-item-datetime text-[0.6875rem] text-[var(--nim-text-faint)] whitespace-nowrap transition-colors duration-150 ${namingMode ? 'min-w-0 overflow-hidden text-ellipsis' : ''}`} title={fullDateTime}>{relativeTime}</span>
               {displayModel && <span className="session-list-item-model overflow-hidden text-ellipsis whitespace-nowrap">{displayModel}</span>}
               {phase && <SessionPhaseBadge phase={phase} />}
               <SessionExternalMarker sessionId={id} />

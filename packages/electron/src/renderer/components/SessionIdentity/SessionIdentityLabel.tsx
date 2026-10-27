@@ -7,6 +7,14 @@ import {
   type SessionIdentitySource,
 } from './sessionIdentityDisplay';
 
+// Space order for one line: the title takes only what is left after the key,
+// marker and purpose (basis 0, never below a few characters); the purpose
+// shrinks only when even that does not fit. A fractional shrink factor is not
+// enough: any sub-pixel shrink makes the purpose ellipsize. Inline styles, not
+// arbitrary Tailwind values, so the order holds wherever the label renders.
+const INLINE_TITLE_STYLE: React.CSSProperties = { flex: '1 1 0%', minWidth: '2.5em' };
+const INLINE_PURPOSE_STYLE: React.CSSProperties = { flex: '0 1 auto' };
+
 interface SessionIdentityLabelProps {
   session: SessionIdentitySource;
   /**
@@ -27,6 +35,11 @@ interface SessionIdentityLabelProps {
    * there and the row's own label carries the identity.
    */
   keyFocusable?: boolean;
+  /**
+   * Leave the purpose and SYNTHETIC marker out of this line; the host shows
+   * them with `SessionIdentityPurpose` on its own second line.
+   */
+  purposeElsewhere?: boolean;
 }
 
 /**
@@ -44,6 +57,7 @@ export const SessionIdentityLabel: React.FC<SessionIdentityLabelProps> = ({
   untitledLabel,
   nativeTitle = true,
   keyFocusable = true,
+  purposeElsewhere = false,
 }) => {
   const display = getSessionIdentityDisplay(session, untitledLabel);
   const { primaryTrackerId } = display;
@@ -102,7 +116,8 @@ export const SessionIdentityLabel: React.FC<SessionIdentityLabelProps> = ({
 
   const titlePart = (
     <span
-      className={`session-identity-title min-w-0 truncate ${titleClassName}`}
+      className={`session-identity-title truncate ${layout === 'inline' ? '' : 'min-w-0'} ${titleClassName}`}
+      style={layout === 'inline' ? INLINE_TITLE_STYLE : undefined}
       aria-hidden="true"
       data-testid="session-identity-title"
     >
@@ -110,9 +125,12 @@ export const SessionIdentityLabel: React.FC<SessionIdentityLabelProps> = ({
     </span>
   );
 
-  const purposePart = display.purpose ? (
+  // Inline, the title gives up its width first (down to a few characters);
+  // the purpose shrinks only after that, so `Implementation 2` keeps its number.
+  const purposePart = display.purpose && !purposeElsewhere ? (
     <span
-      className={`session-identity-purpose min-w-0 truncate text-nim-muted ${layout === 'inline' ? 'shrink-0 max-w-[50%]' : ''}`}
+      className="session-identity-purpose min-w-0 truncate text-nim-muted"
+      style={layout === 'inline' ? INLINE_PURPOSE_STYLE : undefined}
       aria-hidden="true"
       data-testid="session-identity-purpose"
     >
@@ -120,7 +138,7 @@ export const SessionIdentityLabel: React.FC<SessionIdentityLabelProps> = ({
     </span>
   ) : null;
 
-  const syntheticPart = display.synthetic ? (
+  const syntheticPart = display.synthetic && !purposeElsewhere ? (
     <span
       className="session-identity-synthetic shrink-0 rounded px-1 text-[9px] font-semibold leading-4 tracking-[0.04em] text-nim-warning border border-[color:var(--nim-warning)]"
       aria-hidden="true"
@@ -171,6 +189,33 @@ export const SessionIdentityLabel: React.FC<SessionIdentityLabelProps> = ({
       {titlePart}
       {syntheticPart}
       {purposePart}
+    </span>
+  );
+};
+
+/**
+ * The purpose and SYNTHETIC marker on their own, for a host that shows them on
+ * a second line (a two-line list row). Hidden from assistive tech: the host's
+ * label carries the full identity.
+ */
+export const SessionIdentityPurpose: React.FC<{ session: SessionIdentitySource; className?: string }> = ({ session, className = '' }) => {
+  const display = getSessionIdentityDisplay(session);
+  if (!display.purpose && !display.synthetic) return null;
+  return (
+    <span className={`session-identity-purpose-line flex min-w-0 items-center gap-1 ${className}`} aria-hidden="true">
+      {display.synthetic && (
+        <span
+          className="session-identity-synthetic shrink-0 rounded px-1 text-[9px] font-semibold leading-4 tracking-[0.04em] text-nim-warning border border-[color:var(--nim-warning)]"
+          data-testid="session-identity-synthetic"
+        >
+          {SYNTHETIC_MARKER}
+        </span>
+      )}
+      {display.purpose && (
+        <span className="session-identity-purpose min-w-0 truncate" data-testid="session-identity-purpose">
+          {display.purpose}
+        </span>
+      )}
     </span>
   );
 };
