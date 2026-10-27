@@ -50,6 +50,7 @@ describe('buildTrackerLaunchContext', () => {
         'Update this tracker item\'s status when done using tracker_update with id "NIM-1624".',
       ].join('\n'),
       worktreeName: 'nim-1624-launch-a-worktree-from-a-tracker',
+      sessionTitle: 'NIM-1624 · Launch a Worktree from a Tracker — Implementation',
     });
   });
 
@@ -78,6 +79,27 @@ describe('buildTrackerLaunchContext', () => {
     expect(context.draftInput).toContain('implement tracker item plan-branching: Branching Plan');
     expect(context.draftInput).toContain('Source: @nimbalyst-local/plans/branching.md');
     expect(context.worktreeName).toBe('plan-branching-branching-plan');
+    expect(context.sessionTitle).toBe('Branching Plan — Implementation');
+  });
+
+  // A draft card has no key until it is published; never invent one.
+  it('titles a keyless draft card with its title alone', () => {
+    const context = buildTrackerLaunchContext('task_1', makeTrackerRecord({
+      id: 'task_1',
+      issueKey: undefined,
+      fields: { title: 'Draft card', status: 'to-do' },
+    }));
+
+    expect(context.sessionTitle).toBe('Draft card — Implementation');
+  });
+
+  it('keeps a long card title whole instead of truncating the key or purpose', () => {
+    const longTitle = 'Keep card-linked chat names correct automatically across restart, resume, provider change and publication';
+    const context = buildTrackerLaunchContext('feature_1624', makeTrackerRecord({
+      fields: { title: longTitle, status: 'to-do' },
+    }));
+
+    expect(context.sessionTitle).toBe(`NIM-1624 · ${longTitle} — Implementation`);
   });
 });
 

@@ -470,11 +470,15 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
           id: sessionId,
           provider,
           model: defaultModel,
-          title: 'New Session',
+          title: trackerContext.sessionTitle,
         },
         workspaceId: workspacePath,
       });
       if (result?.success && result?.id) {
+        // Name the session before its first turn so it counts as named
+        // out-of-band: providers skip self-naming and the first prompt does
+        // not replace the card title.
+        await window.electronAPI.invoke('sessions:update-title', result.id, trackerContext.sessionTitle);
         await window.electronAPI.invoke('tracker:link-session', {
           trackerId: trackerContext.trackerLinkId,
           sessionId: result.id,
@@ -525,6 +529,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       );
       if (!sessionId) throw new Error('Worktree session was not created');
 
+      await window.electronAPI.invoke('sessions:update-title', sessionId, pendingWorktreeLaunch.sessionTitle);
       await window.electronAPI.invoke('tracker:link-session', {
         trackerId: pendingWorktreeLaunch.trackerLinkId,
         sessionId,

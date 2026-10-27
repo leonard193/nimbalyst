@@ -5,6 +5,10 @@ import {
   getRecordStatus,
   getRecordTitle,
 } from '@nimbalyst/runtime/plugins/TrackerPlugin/trackerRecordAccessors';
+import {
+  buildCardSessionTitle,
+  DEFAULT_CARD_SESSION_PURPOSE,
+} from '@nimbalyst/runtime/ai/server/cardSessionNaming';
 
 const MAX_WORKTREE_NAME_LENGTH = 64;
 
@@ -13,6 +17,12 @@ export interface TrackerLaunchContext {
   trackerLinkId: string;
   draftInput: string;
   worktreeName: string;
+  /**
+   * Card-based title written before the first turn, so the session counts as
+   * named out-of-band and neither the provisional nor the provider namer
+   * replaces it.
+   */
+  sessionTitle: string;
 }
 
 /**
@@ -112,5 +122,10 @@ export function buildTrackerLaunchContext(
       : trackerItemId,
     draftInput: lines.join('\n'),
     worktreeName: deriveTrackerWorktreeName(itemId, title),
+    sessionTitle: buildCardSessionTitle({
+      issueKey: trackerItem?.issueKey,
+      cardTitle: title,
+      purpose: DEFAULT_CARD_SESSION_PURPOSE,
+    }),
   };
 }
