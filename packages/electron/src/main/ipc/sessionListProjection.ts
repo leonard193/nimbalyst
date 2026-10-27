@@ -61,6 +61,8 @@ export function projectSessionList(
       tags: (entry as any).tags || undefined,
       // Linked tracker item IDs
       linkedTrackerItemIds: (entry as any).linkedTrackerItemIds || undefined,
+      namingMode: entry.namingMode,
+      cardIdentity: entry.cardIdentity,
       contextUsage: entry.contextUsage,
       metadata: {},
     };

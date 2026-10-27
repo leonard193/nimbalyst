@@ -102,3 +102,54 @@ describe('SessionListItem - full name on hover (#577, #429)', () => {
     expect(row?.getAttribute('aria-label')).toContain(long);
   });
 });
+
+describe('SessionListItem - card identity', () => {
+  const cardSession = {
+    ...baseProps,
+    title: 'LEO-21 · Show the card title and chat purpose consistently — SYNTHETIC Codex check',
+    namingMode: 'card' as const,
+    cardIdentity: {
+      primaryTrackerId: 'delivery-slice_21',
+      issueKey: 'LEO-21',
+      cardTitle: 'Show the card title and chat purpose consistently',
+      purpose: 'SYNTHETIC Codex check',
+    },
+  };
+
+  it('opens the primary card from the key without opening the session', () => {
+    const onClick = vi.fn();
+    const navigated: string[] = [];
+    const listener = (event: Event) => navigated.push((event as CustomEvent).detail.itemId);
+    window.addEventListener('nimbalyst:navigate-tracker-item', listener);
+    try {
+      const { container } = render(<SessionListItem {...cardSession} onClick={onClick} />);
+      fireEvent.click(container.querySelector('[data-testid="session-identity-key"]')!);
+      expect(navigated).toEqual(['delivery-slice_21']);
+      expect(onClick).not.toHaveBeenCalled();
+    } finally {
+      window.removeEventListener('nimbalyst:navigate-tracker-item', listener);
+    }
+  });
+
+  it('names the row with the complete identity, SYNTHETIC included', () => {
+    const { container } = render(<SessionListItem {...cardSession} />);
+    const row = container.querySelector('[aria-label^="Session: "]');
+    expect(row?.getAttribute('aria-label')).toContain('LEO-21 · Show the card title and chat purpose consistently — SYNTHETIC Codex check');
+  });
+
+  // The label truncates its title part, not itself; the hover still reveals the whole identity.
+  it('shows the full identity on hover when only the title part is clipped', () => {
+    const { container } = render(<SessionListItem {...cardSession} />);
+    const titleEl = container.querySelector('.session-list-item-title')!;
+    setElementWidth(titleEl, { clientWidth: 160, scrollWidth: 160 });
+    setElementWidth(container.querySelector('.session-identity-title')!, { clientWidth: 60, scrollWidth: 240 });
+    fireEvent.mouseEnter(titleEl);
+    expect(screen.getByRole('tooltip').textContent).toBe(cardSession.title);
+  });
+
+  it('gives a general chat no card key', () => {
+    const { container } = render(<SessionListItem {...baseProps} title="Refactor the parser" />);
+    expect(container.querySelector('[data-testid="session-identity-key"]')).toBeNull();
+  });
+});
+

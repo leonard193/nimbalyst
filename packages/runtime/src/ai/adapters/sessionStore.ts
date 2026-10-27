@@ -1,5 +1,6 @@
 import type { AgentRole, SessionData, SessionMode, SessionType, TranscriptViewMessage } from '../server/types';
 import type { SessionContextUsage } from '../sessionContextUsage';
+import type { CardSessionIdentity, SessionNamingMode } from '../server/cardSessionNaming';
 
 // Type aliases for compatibility
 export type ChatMessage = TranscriptViewMessage;
@@ -51,6 +52,10 @@ export interface SessionMeta {
   tags?: string[];
   // Linked tracker item IDs (from metadata JSONB)
   linkedTrackerItemIds?: string[];
+  /** How the title is maintained (metadata.namingMode); absent for ordinary sessions. */
+  namingMode?: SessionNamingMode;
+  /** Primary card, its key and title, and this chat's purpose (metadata.cardIdentity). */
+  cardIdentity?: CardSessionIdentity;
   /** Last persisted context-window fill (metadata.tokenUsage.currentContext). */
   contextUsage?: SessionContextUsage;
   // Branch tracking - SEPARATE from hierarchical parentSessionId

@@ -116,6 +116,7 @@ export {
   removeSessionFullAtom,
   // New registry-based atoms
   sessionRegistryAtom,
+  sessionRegistryEntryAtom,
   sessionListFromRegistryAtom,
   sessionListRootFromRegistryAtom,
   // Per-session data (AISessionView owns its own data)

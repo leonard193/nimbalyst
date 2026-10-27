@@ -9,6 +9,17 @@
 
 export const DEFAULT_CARD_SESSION_PURPOSE = 'Implementation';
 
+/** Purposes offered at launch and in the identity editor. Any other text is a custom purpose. */
+export const CARD_SESSION_PURPOSE_PRESETS = [
+  'Implementation',
+  'Independent review',
+  'Investigation',
+  'SYNTHETIC check',
+] as const;
+
+/** Marks a test chat whose results are never real preferences or accepted work. */
+export const SYNTHETIC_MARKER = 'SYNTHETIC';
+
 const KEY_SEPARATOR = ' · ';
 const PURPOSE_SEPARATOR = ' — ';
 
@@ -98,6 +109,19 @@ export function readCardSessionIdentity(metadata: unknown): CardSessionIdentity 
   };
 }
 
+/**
+ * The naming fields a session list entry carries, read from its metadata.
+ * Empty for ordinary sessions, so they keep no card identity in the UI.
+ */
+export function readSessionNamingFields(
+  metadata: unknown,
+): { namingMode?: SessionNamingMode; cardIdentity?: CardSessionIdentity } {
+  const namingMode = readSessionNamingMode(metadata);
+  const cardIdentity = namingMode ? readCardSessionIdentity(metadata) : undefined;
+  if (!namingMode || !cardIdentity) return {};
+  return { namingMode, cardIdentity };
+}
+
 /** Validate an identity from IPC or a tool call. Throws on a missing field. */
 export function normalizeCardSessionIdentity(input: unknown): CardSessionIdentity {
   if (!input || typeof input !== 'object') {
@@ -137,4 +161,42 @@ export function userRenameMetadata(currentMetadata: unknown): Record<string, unk
   return readSessionNamingMode(currentMetadata) === 'card'
     ? { [NAMING_MODE_METADATA_KEY]: 'custom' }
     : undefined;
+}
+
+/**
+ * A purpose another chat on the same card does not already use: the purpose
+ * itself, else the first free `<purpose> 2`, `<purpose> 3`, ... Comparison
+ * ignores case and spacing. A purpose that already carries a number keeps
+ * counting from its base (`Implementation 2` taken -> `Implementation 3`).
+ */
+export function nextAvailablePurpose(purpose: string, takenPurposes: Iterable<string>): string {
+  const wanted = clean(purpose) || DEFAULT_CARD_SESSION_PURPOSE;
+  const taken = new Set(Array.from(takenPurposes, (value) => clean(value).toLowerCase()));
+  if (!taken.has(wanted.toLowerCase())) return wanted;
+  const numbered = /^(.*\S)\s+(\d+)$/.exec(wanted);
+  const base = numbered ? numbered[1] : wanted;
+  let n = numbered ? Number(numbered[2]) + 1 : 2;
+  while (taken.has(`${base} ${n}`.toLowerCase())) n += 1;
+  return `${base} ${n}`;
+}
+
+/**
+ * Purposes already used by other sessions whose primary card is `primaryTrackerId`,
+ * in card or custom naming mode. Archived sessions count: a name is never reused.
+ */
+export function purposesTakenOnCard(
+  sessions: Iterable<{ id: string; metadata: unknown }>,
+  primaryTrackerId: string,
+  excludeSessionId?: string,
+): string[] {
+  const purposes: string[] = [];
+  for (const session of sessions) {
+    if (session.id === excludeSessionId) continue;
+    if (!readSessionNamingMode(session.metadata)) continue;
+    const identity = readCardSessionIdentity(session.metadata);
+    if (identity?.primaryTrackerId === primaryTrackerId && identity.purpose) {
+      purposes.push(identity.purpose);
+    }
+  }
+  return purposes;
 }

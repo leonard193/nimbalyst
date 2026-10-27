@@ -2583,6 +2583,8 @@ const SessionHistoryComponent: React.FC = () => {
                 ...(c.phase && { phase: c.phase }),
                 ...(c.tags && { tags: c.tags }),
                 ...(c.linkedTrackerItemIds && { linkedTrackerItemIds: c.linkedTrackerItemIds }),
+                ...(c.namingMode && { namingMode: c.namingMode }),
+                ...(c.cardIdentity && { cardIdentity: c.cardIdentity }),
               }));
 
               workstreamChildrenFetchedForRef.current.set(`${session.id}|${showArchived}`, session.descendantCount ?? session.childCount ?? 0);
@@ -3543,6 +3545,8 @@ const SessionHistoryComponent: React.FC = () => {
                     uncommittedCount={session.uncommittedCount}
                     branchedAt={session.branchedAt}
                     phase={session.phase}
+                    namingMode={session.namingMode}
+                    cardIdentity={session.cardIdentity}
                     compact={compactRows}
                   />
                 );

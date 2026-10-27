@@ -5,8 +5,11 @@ import {
   buildCardSessionBaseTitle,
   buildCardSessionTitle,
   canWriteSessionTitle,
+  nextAvailablePurpose,
   normalizeCardSessionIdentity,
+  purposesTakenOnCard,
   readCardSessionIdentity,
+  readSessionNamingFields,
   userRenameMetadata,
 } from '../cardSessionNaming';
 
@@ -77,5 +80,46 @@ describe('normalizeCardSessionIdentity', () => {
   it('round-trips through stored metadata', () => {
     const identity = normalizeCardSessionIdentity({ primaryTrackerId: 't1', issueKey: 'LEO-20', cardTitle: 'Card', purpose: 'Independent review' });
     expect(readCardSessionIdentity(JSON.stringify({ cardIdentity: identity }))).toEqual(identity);
+  });
+});
+
+describe('nextAvailablePurpose', () => {
+  it('keeps a purpose no other chat on the card uses', () => {
+    expect(nextAvailablePurpose('Independent review', ['Implementation'])).toBe('Independent review');
+  });
+
+  it('numbers a repeated purpose from 2, skipping numbers already taken', () => {
+    expect(nextAvailablePurpose('Implementation', ['Implementation'])).toBe('Implementation 2');
+    expect(nextAvailablePurpose('Implementation', ['implementation', 'Implementation 2'])).toBe('Implementation 3');
+    expect(nextAvailablePurpose('Implementation 2', ['Implementation', 'Implementation 2'])).toBe('Implementation 3');
+  });
+
+  it('defaults an empty purpose', () => {
+    expect(nextAvailablePurpose('  ', [])).toBe('Implementation');
+  });
+});
+
+describe('purposesTakenOnCard', () => {
+  const identity = (primaryTrackerId: string, purpose: string) => ({ primaryTrackerId, cardTitle: 'Card', purpose });
+
+  it('counts card and custom chats on the same primary card, not the chat itself or other cards', () => {
+    const sessions = [
+      { id: 'self', metadata: { namingMode: 'card', cardIdentity: identity('t1', 'Implementation') } },
+      { id: 'a', metadata: { namingMode: 'card', cardIdentity: identity('t1', 'Implementation') } },
+      { id: 'b', metadata: JSON.stringify({ namingMode: 'custom', cardIdentity: identity('t1', 'Independent review') }) },
+      { id: 'c', metadata: { namingMode: 'card', cardIdentity: identity('t2', 'Investigation') } },
+      { id: 'd', metadata: { cardIdentity: identity('t1', 'Stale') } },
+    ];
+    expect(purposesTakenOnCard(sessions, 't1', 'self')).toEqual(['Implementation', 'Independent review']);
+  });
+});
+
+describe('readSessionNamingFields', () => {
+  it('returns the mode and identity together, or nothing', () => {
+    const cardIdentity = { primaryTrackerId: 't1', issueKey: 'LEO-21', cardTitle: 'Card', purpose: 'Implementation' };
+    expect(readSessionNamingFields({ namingMode: 'card', cardIdentity })).toEqual({ namingMode: 'card', cardIdentity });
+    expect(readSessionNamingFields({ namingMode: 'card' })).toEqual({});
+    expect(readSessionNamingFields({ cardIdentity })).toEqual({});
+    expect(readSessionNamingFields(null)).toEqual({});
   });
 });

@@ -10,6 +10,8 @@
  */
 
 import {
+  nextAvailablePurpose,
+  purposesTakenOnCard,
   readCardSessionIdentity,
   readSessionNamingMode,
   type CardSessionIdentity,
@@ -20,6 +22,23 @@ import {
  * SQLite; the identity itself is parsed in JS from the whole column.
  */
 export const CARD_SESSIONS_QUERY = `SELECT id, metadata FROM ai_sessions WHERE metadata->>'namingMode' = 'card'`;
+
+/** Sessions with a card identity, in card or custom naming mode, archived included. */
+export const NAMED_CARD_SESSIONS_QUERY = `SELECT id, metadata FROM ai_sessions WHERE metadata->>'namingMode' IN ('card', 'custom')`;
+
+/**
+ * Give a launch a purpose no other chat on the same card uses, so two
+ * launches from one card read `Implementation` and `Implementation 2`.
+ */
+export async function numberRepeatedPurpose(
+  sessionId: string,
+  identity: CardSessionIdentity,
+  listNamedCardSessions: () => Promise<Array<{ id: string; metadata: unknown }>>,
+): Promise<CardSessionIdentity> {
+  const taken = purposesTakenOnCard(await listNamedCardSessions(), identity.primaryTrackerId, sessionId);
+  const purpose = nextAvailablePurpose(identity.purpose, taken);
+  return purpose === identity.purpose ? identity : { ...identity, purpose };
+}
 
 export interface CardTrackerChange {
   /** Every id the card is known by (public id and row id may differ). */
@@ -32,7 +51,8 @@ export interface CardSessionTitleFollowerDeps {
   /** Sessions in card naming mode; filtering by card happens here. */
   listCardSessions(): Promise<Array<{ id: string; metadata: unknown }>>;
   setCardIdentity(sessionId: string, identity: CardSessionIdentity): Promise<string>;
-  notifyTitle(sessionId: string, title: string): void;
+  /** Tell renderers the new title and the identity it was built from. */
+  notifyTitle(sessionId: string, title: string, identity: CardSessionIdentity): void;
 }
 
 function nonEmpty(value: unknown): string | undefined {
@@ -80,7 +100,7 @@ export async function followCardChanges(
     }
     if (next === current) continue;
     const title = await deps.setCardIdentity(session.id, next);
-    deps.notifyTitle(session.id, title);
+    deps.notifyTitle(session.id, title, next);
     retitled.push(session.id);
   }
   return retitled;
@@ -139,6 +159,6 @@ export async function setPrimaryCard(
     return { applied: false, reason: 'other-primary-card', primaryTrackerId: current.primaryTrackerId };
   }
   const title = await deps.setCardIdentity(sessionId, identity);
-  deps.notifyTitle(sessionId, title);
+  deps.notifyTitle(sessionId, title, identity);
   return { applied: true, title };
 }

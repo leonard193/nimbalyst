@@ -172,13 +172,29 @@ describe('deriveTrackerWorktreeName', () => {
   });
 });
 
+describe('buildTrackerLaunchContext with a purpose', () => {
+  it('names the session and the draft after the chosen purpose', () => {
+    const context = buildTrackerLaunchContext('feature_1624', makeTrackerRecord(), { purpose: '  Independent   review ' });
+
+    expect(context.cardIdentity.purpose).toBe('Independent review');
+    expect(context.sessionTitle).toBe('NIM-1624 · Launch a Worktree from a Tracker — Independent review');
+    expect(context.draftInput.split('\n')[0]).toBe('Independent review for tracker item NIM-1624: Launch a Worktree from a Tracker');
+  });
+
+  it('falls back to Implementation for a blank purpose', () => {
+    const context = buildTrackerLaunchContext('feature_1624', makeTrackerRecord(), { purpose: ' ' });
+    expect(context.cardIdentity.purpose).toBe('Implementation');
+    expect(context.draftInput.split('\n')[0]).toBe('implement tracker item NIM-1624: Launch a Worktree from a Tracker');
+  });
+});
+
 describe('applyTrackerLaunchIdentity', () => {
   it('writes the card identity for the new session', async () => {
     const context = buildTrackerLaunchContext('feature_1624', makeTrackerRecord());
     const invoke = vi.fn(async () => ({ success: true }));
 
     await expect(applyTrackerLaunchIdentity('session', context, invoke)).resolves.toBe(true);
-    expect(invoke).toHaveBeenCalledWith('sessions:set-card-identity', 'session', context.cardIdentity);
+    expect(invoke).toHaveBeenCalledWith('sessions:set-card-identity', 'session', context.cardIdentity, { numberRepeatedPurpose: true });
   });
 
   it('does not fail the launch when naming fails', async () => {

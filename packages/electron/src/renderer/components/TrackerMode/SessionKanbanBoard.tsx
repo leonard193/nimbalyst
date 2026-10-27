@@ -62,6 +62,8 @@ import { ArchiveWorktreeDialog } from '../AgentMode/ArchiveWorktreeDialog';
 import { useArchiveWorktreeDialog } from '../../hooks/useArchiveWorktreeDialog';
 import { saveSessionArchived } from '../../utils/saveSessionArchived';
 import { useFloatingMenu, FloatingPortal, virtualElement } from '../../hooks/useFloatingMenu';
+import { SessionIdentityLabel } from '../SessionIdentity/SessionIdentityLabel';
+import { navigateToTrackerItem } from '../PullRequestMode/trackerNavigation';
 
 // ============================================================
 // Keyboard Navigation Types
@@ -398,6 +400,13 @@ function SessionKanbanCard({ session, onSelect, onArchive, onRename, phaseColor,
                 onKeyDown={handleRenameKeyDown}
                 onBlur={handleRenameSubmit}
                 onClick={(e) => e.stopPropagation()}
+              />
+            ) : session.namingMode ? (
+              <SessionIdentityLabel
+                session={session}
+                layout="stacked"
+                onOpenCard={navigateToTrackerItem}
+                className="session-kanban-card-identity text-xs font-medium text-nim leading-snug"
               />
             ) : (
               <div className="text-xs font-medium text-nim leading-snug line-clamp-2">

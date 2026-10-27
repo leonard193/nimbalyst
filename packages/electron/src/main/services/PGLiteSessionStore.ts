@@ -29,6 +29,7 @@ import type {
 } from '@nimbalyst/runtime';
 import { filterSessionsForPersonalSync } from '@nimbalyst/runtime/sync';
 import { readSessionContextUsage } from '@nimbalyst/runtime/ai/sessionContextUsage';
+import { readSessionNamingFields } from '@nimbalyst/runtime/ai/server/cardSessionNaming';
 
 type PGliteLike = {
   query<T = any>(sql: string, params?: any[]): Promise<{ rows: T[] }>;
@@ -75,7 +76,7 @@ const normalizeJsonObject = parseJsonObjectColumn;
  */
 const SESSION_LIST_METADATA_KEYS = [
   'hasUnread', 'hasPendingPrompt', 'externalSource', 'externalLastActivityAt',
-  'phase', 'tags', 'linkedTrackerItemIds', 'tokenUsage',
+  'phase', 'tags', 'linkedTrackerItemIds', 'tokenUsage', 'namingMode', 'cardIdentity',
 ] as const;
 function sessionListMetadataSql(): string {
   return `${buildMetadataProjectionSql('s.metadata', SESSION_LIST_METADATA_KEYS, [`'nestedHasUnread', s.metadata->'metadata'->'hasUnread'`])} AS metadata`;
@@ -950,6 +951,7 @@ export function createPGLiteSessionStore(db: PGliteLike, ensureDbReady?: EnsureR
           // Linked tracker item IDs from metadata JSONB
           linkedTrackerItemIds: Array.isArray(metadata.linkedTrackerItemIds) ? metadata.linkedTrackerItemIds : undefined,
           contextUsage: readSessionContextUsage(metadata.tokenUsage),
+          ...readSessionNamingFields(metadata),
         } satisfies SessionMeta & { hasPendingInteractivePrompt?: boolean; phase?: string; tags?: string[]; linkedTrackerItemIds?: string[] };
       });
       return sessions.sort((a, b) => b.updatedAt - a.updatedAt);

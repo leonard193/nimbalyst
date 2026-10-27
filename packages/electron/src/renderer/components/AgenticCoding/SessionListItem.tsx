@@ -13,6 +13,10 @@ import { sessionOrChildProcessingAtom, sessionUnreadAtom, sessionPendingPromptAt
 import { sessionRegistryAtom } from '../../store/atoms/sessions';
 import { SessionContextMenu } from './SessionContextMenu';
 import { FullTitleTooltip } from './FullTitleTooltip';
+import { SessionIdentityLabel } from '../SessionIdentity/SessionIdentityLabel';
+import { getSessionIdentityDisplay } from '../SessionIdentity/sessionIdentityDisplay';
+import { navigateToTrackerItem } from '../PullRequestMode/trackerNavigation';
+import type { CardSessionIdentity, SessionNamingMode } from '@nimbalyst/runtime/ai/server/cardSessionNaming';
 import { settingAtom } from '../../store/atoms/settingAtomFamily';
 import { sessionAgentWakePendingAtom } from '../../store/atoms/teamInbox';
 import { sessionBackgroundTasksAtom, describeBackgroundWait } from '../../store/atoms/sessionBackgroundTasks';
@@ -191,6 +195,9 @@ interface SessionListItemProps {
   uncommittedCount?: number; // Number of uncommitted files in this session
   branchedAt?: number; // Timestamp when this session was branched (branch tracking)
   phase?: string; // Kanban board phase (backlog, planning, implementing, validating, complete)
+  /** Card naming: when set, the title shows the card key, card title and purpose. */
+  namingMode?: SessionNamingMode;
+  cardIdentity?: CardSessionIdentity;
 }
 
 // Named rather than an inline arrow so the render profiler can report it by
@@ -232,6 +239,8 @@ export const SessionListItem = memo<SessionListItemProps>(function SessionListIt
   uncommittedCount,
   branchedAt,
   phase,
+  namingMode,
+  cardIdentity,
 }) {
   const [showContextMenu, setShowContextMenu] = useState(false);
   const [contextMenuPosition, setContextMenuPosition] = useState({ x: 0, y: 0 });
@@ -290,6 +299,8 @@ export const SessionListItem = memo<SessionListItemProps>(function SessionListIt
   }, [isRenaming]);
 
   const displayTitle = title || 'Untitled Session';
+  const identitySource = { title: displayTitle, namingMode, cardIdentity };
+  const identityLabel = getSessionIdentityDisplay(identitySource, 'Untitled Session').fullLabel;
 
   // Per-session live activity. Bumped on every `ai:message-logged`; only
   // this list item re-renders when its own activity ticks, instead of the
@@ -367,7 +378,7 @@ export const SessionListItem = memo<SessionListItemProps>(function SessionListIt
           onClick(e as unknown as React.MouseEvent);
         }
       }}
-      aria-label={`Session: ${displayTitle}, ${timestampLabel} ${relativeTime}${isLoaded ? ' (loaded in tab)' : ''}${isArchived ? ' (archived)' : ''}`}
+      aria-label={`Session: ${identityLabel}, ${timestampLabel} ${relativeTime}${isLoaded ? ' (loaded in tab)' : ''}${isArchived ? ' (archived)' : ''}`}
       aria-current={isActive ? 'page' : undefined}
     >
       {treeLeading}
@@ -422,10 +433,10 @@ export const SessionListItem = memo<SessionListItemProps>(function SessionListIt
           <>
           <div className="session-list-item-compact-line flex items-center gap-1.5 min-w-0">
             <FullTitleTooltip
-              label={displayTitle}
+              label={identityLabel}
               className={`session-list-item-title block flex-1 min-w-0 text-[0.8125rem] text-[var(--nim-text)] font-medium overflow-hidden text-ellipsis whitespace-nowrap transition-colors duration-150 ${isActive ? 'font-semibold' : ''} ${isArchived ? 'text-[var(--nim-text-faint)]' : ''}`}
             >
-              {displayTitle}
+              <SessionIdentityLabel session={identitySource} onOpenCard={navigateToTrackerItem} untitledLabel="Untitled Session" nativeTitle={false} keyFocusable={false} />
             </FullTitleTooltip>
             {treeDetails}
             <span className="session-list-item-datetime shrink-0 text-[0.6875rem] text-[var(--nim-text-faint)] whitespace-nowrap" title={fullDateTime}>{relativeTime}</span>
@@ -436,10 +447,10 @@ export const SessionListItem = memo<SessionListItemProps>(function SessionListIt
         ) : (
           <>
             <FullTitleTooltip
-              label={displayTitle}
+              label={identityLabel}
               className={`session-list-item-title block text-[0.8125rem] text-[var(--nim-text)] font-medium overflow-hidden text-ellipsis whitespace-nowrap mb-0.5 transition-colors duration-150 ${isActive ? 'font-semibold' : ''} ${isArchived ? 'text-[var(--nim-text-faint)]' : ''}`}
             >
-              {displayTitle}
+              <SessionIdentityLabel session={identitySource} onOpenCard={navigateToTrackerItem} untitledLabel="Untitled Session" nativeTitle={false} keyFocusable={false} />
             </FullTitleTooltip>
             <div className="session-list-item-meta flex gap-1.5 text-[0.6875rem] text-[var(--nim-text-faint)] items-center mt-0.5">
               <span className="session-list-item-datetime text-[0.6875rem] text-[var(--nim-text-faint)] whitespace-nowrap transition-colors duration-150" title={fullDateTime}>{relativeTime}</span>
@@ -519,6 +530,8 @@ export const SessionListItem = memo<SessionListItemProps>(function SessionListIt
     prev.projectPath === next.projectPath &&
     prev.uncommittedCount === next.uncommittedCount &&
     prev.branchedAt === next.branchedAt &&
-    prev.phase === next.phase
+    prev.phase === next.phase &&
+    prev.namingMode === next.namingMode &&
+    prev.cardIdentity === next.cardIdentity
   );
 });

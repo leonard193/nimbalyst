@@ -297,6 +297,8 @@ it('lists and searches sessions from projected metadata, never the whole blob', 
       tags: ['bug-fix', 'electron'],
       linkedTrackerItemIds: ['bug_1'],
       tokenUsage: { totalTokens: 10, currentContext: { tokens: 5, contextWindow: 100 } },
+      namingMode: 'card',
+      cardIdentity: { primaryTrackerId: 'bug_1', issueKey: 'LEO-21', cardTitle: 'Card', purpose: 'SYNTHETIC check' },
       currentTasks: Array.from({ length: 50 }, (_, i) => ({ taskId: `t${i}`, summary: 'x'.repeat(1000) })),
     })],
   );
@@ -321,6 +323,13 @@ it('lists and searches sessions from projected metadata, never the whole blob', 
     tags: ['bug-fix', 'electron'],
     linkedTrackerItemIds: ['bug_1'],
     contextUsage: { tokens: 5, contextWindow: 100 },
+    // The nested identity survives json_object on SQLite as an object, not a string.
+    namingMode: 'card',
+    cardIdentity: { primaryTrackerId: 'bug_1', issueKey: 'LEO-21', cardTitle: 'Card', purpose: 'SYNTHETIC check' },
+  });
+  expect(sessionListMetadata(projectSessionList([listed], new Map())[0] as any, '/p')).toMatchObject({
+    namingMode: 'card',
+    cardIdentity: { issueKey: 'LEO-21', purpose: 'SYNTHETIC check' },
   });
   const [found] = await store.search('/p', 'Projection probe');
   expect(found.contextUsage).toEqual({ tokens: 5, contextWindow: 100 });

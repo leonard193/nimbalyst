@@ -894,6 +894,15 @@ export const sessionListTitleAtom = atomFamily((sessionId: string) =>
 );
 
 /**
+ * One session's registry entry. Entries are replaced on change, so a reader
+ * re-renders only when its own session changes. Carries the card naming
+ * fields (`namingMode`, `cardIdentity`) and `linkedTrackerItemIds`.
+ */
+export const sessionRegistryEntryAtom = atomFamily((sessionId: string) =>
+  atom((get) => get(sessionRegistryAtom).get(sessionId))
+);
+
+/**
  * Derived: Session provider from sessionData.
  * For use in tabs and lists where the provider icon is needed.
  * Falls back to sessionRegistryAtom when sessionStoreAtom hasn't been loaded yet.

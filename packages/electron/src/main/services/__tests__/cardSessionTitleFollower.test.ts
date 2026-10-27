@@ -5,6 +5,8 @@ import { buildCardSessionTitle, type CardSessionIdentity } from '@nimbalyst/runt
 
 import {
   CARD_SESSIONS_QUERY,
+  NAMED_CARD_SESSIONS_QUERY,
+  numberRepeatedPurpose,
   followCardChanges,
   nextCardIdentity,
   type CardSessionTitleFollowerDeps,
@@ -38,7 +40,7 @@ describe('followCardChanges', () => {
 
     expect(retitled).toEqual(['s1']);
     expect(titles.get('s1')).toBe('LEO-20 · Keep card-linked chat names correct automatically — Implementation');
-    expect(deps.notifyTitle).toHaveBeenCalledWith('s1', titles.get('s1'));
+    expect(deps.notifyTitle).toHaveBeenCalledWith('s1', titles.get('s1'), { ...draft, issueKey: 'LEO-20' });
   });
 
   it('follows a card title edit and keeps each chat purpose', async () => {
@@ -123,6 +125,28 @@ describe('CARD_SESSIONS_QUERY on PGLite', () => {
       const { deps, titles } = harness(rows);
       await followCardChanges([{ trackerIds: [draft.primaryTrackerId], issueKey: 'LEO-20' }], deps);
       expect(titles.get('card')).toBe('LEO-20 · Keep card-linked chat names correct automatically — Implementation');
+    } finally {
+      await pg.close();
+    }
+  });
+});
+
+describe('numberRepeatedPurpose on PGLite', () => {
+  it('gives a second launch from the same card the next free number', async () => {
+    const pg = new PGlite();
+    try {
+      await pg.exec(`CREATE TABLE ai_sessions (id TEXT PRIMARY KEY, metadata JSONB)`);
+      await pg.query(`INSERT INTO ai_sessions (id, metadata) VALUES ($1, $2::jsonb), ($3, $4::jsonb), ($5, $6::jsonb), ($7, NULL)`, [
+        'first', JSON.stringify({ namingMode: 'card', cardIdentity: draft }),
+        'review', JSON.stringify({ namingMode: 'card', cardIdentity: { ...draft, purpose: 'Independent review' } }),
+        'second', JSON.stringify({ namingMode: 'card', cardIdentity: draft }),
+        'plain',
+      ]);
+      const list = async () => (await pg.query<{ id: string; metadata: unknown }>(NAMED_CARD_SESSIONS_QUERY)).rows;
+
+      expect((await numberRepeatedPurpose('second', draft, list)).purpose).toBe('Implementation 2');
+      // A chat keeps its own purpose: it is not compared with itself.
+      expect((await numberRepeatedPurpose('review', { ...draft, purpose: 'Independent review' }, list)).purpose).toBe('Independent review');
     } finally {
       await pg.close();
     }

@@ -14,7 +14,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { SQLiteDatabase } from '../SQLiteDatabase';
 import { createSQLiteStoreAdapter } from '../SQLiteStoreAdapter';
-import { CARD_SESSIONS_QUERY } from '../../../services/cardSessionTitleFollower';
+import { CARD_SESSIONS_QUERY, NAMED_CARD_SESSIONS_QUERY, numberRepeatedPurpose } from '../../../services/cardSessionTitleFollower';
 
 const SCHEMA_DIR = path.resolve(__dirname, '../schemas');
 
@@ -371,5 +371,28 @@ describe('SQLiteStoreAdapter', () => {
     expect(rows.map((row) => row.id)).toEqual(['card']);
     const metadata = typeof rows[0].metadata === 'string' ? JSON.parse(rows[0].metadata) : rows[0].metadata;
     expect(metadata.cardIdentity.primaryTrackerId).toBe('t1');
+  });
+
+  // Launch numbering reads card and custom chats, archived included.
+  it('numbers a repeated launch purpose from card and custom chats on the same card', async () => {
+    const adapter = createSQLiteStoreAdapter(db);
+    const identity = (purpose: string, primaryTrackerId = 't1') => ({ primaryTrackerId, cardTitle: 'Card', purpose });
+    const rows: Array<[string, unknown, number]> = [
+      ['a', { namingMode: 'card', cardIdentity: identity('Implementation') }, 0],
+      ['b', { namingMode: 'custom', cardIdentity: identity('Implementation 2') }, 1],
+      ['c', { namingMode: 'card', cardIdentity: identity('Implementation', 't2') }, 0],
+      ['new', { namingMode: 'card', cardIdentity: identity('Implementation') }, 0],
+    ];
+    for (const [id, metadata, archived] of rows) {
+      await adapter.query(
+        `INSERT INTO ai_sessions (id, workspace_id, title, provider, metadata, is_archived) VALUES ($1, $2, $3, $4, $5, $6)`,
+        [id, 'ws1', id, 'claude', JSON.stringify(metadata), archived],
+      );
+    }
+
+    const next = await numberRepeatedPurpose('new', identity('Implementation'), async () =>
+      (await adapter.query<{ id: string; metadata: unknown }>(NAMED_CARD_SESSIONS_QUERY)).rows);
+
+    expect(next.purpose).toBe('Implementation 3');
   });
 });

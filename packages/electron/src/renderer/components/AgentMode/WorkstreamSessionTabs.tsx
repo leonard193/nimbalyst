@@ -15,7 +15,7 @@ import { useAtomValue, useSetAtom } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
 import { ProviderIcon } from '@nimbalyst/runtime/ui/icons/ProviderIcons';
 import { store } from '@nimbalyst/runtime/store';
-import { sessionArchivedAtom, sessionRegistryAtom } from '../../store/atoms/sessions';
+import { sessionArchivedAtom, sessionRegistryAtom, sessionRegistryEntryAtom } from '../../store/atoms/sessions';
 import { AgentSessionPanel } from './AgentSessionPanel';
 import {
   sessionTitleAtom,
@@ -27,6 +27,9 @@ import {
 import { defaultAgentModelAtom } from '../../store/atoms/appSettings';
 import { SessionContextMenu } from '../AgenticCoding/SessionContextMenu';
 import type { SerializableDocumentContext } from '../../hooks/useDocumentContext';
+import { SessionIdentityLabel } from '../SessionIdentity/SessionIdentityLabel';
+import { getSessionIdentityDisplay } from '../SessionIdentity/sessionIdentityDisplay';
+import { navigateToTrackerItem } from '../PullRequestMode/trackerNavigation';
 
 export interface WorkstreamSessionTabsProps {
   workspacePath: string;
@@ -61,6 +64,7 @@ const SessionTab: React.FC<{
   onRename?: (newName: string) => void;
 }> = React.memo(({ sessionId, isActive, onClick, onArchive, onUnarchive, onRename }) => {
   const title = useAtomValue(sessionTitleAtom(sessionId));
+  const registryEntry = useAtomValue(sessionRegistryEntryAtom(sessionId));
   const provider = useAtomValue(sessionProviderAtom(sessionId));
   const isProcessing = useAtomValue(sessionProcessingAtom(sessionId));
   const hasUnread = useAtomValue(sessionUnreadAtom(sessionId));
@@ -118,7 +122,10 @@ const SessionTab: React.FC<{
         } ${hasUnread ? 'unread' : ''} ${isArchived ? 'opacity-60' : ''}`}
         onClick={onClick}
         onContextMenu={handleContextMenu}
-        title={title || 'Untitled'}
+        title={registryEntry?.namingMode ? undefined : (title || 'Untitled')}
+        aria-label={registryEntry?.namingMode
+          ? getSessionIdentityDisplay({ title, namingMode: registryEntry.namingMode, cardIdentity: registryEntry.cardIdentity }, 'Untitled').fullLabel
+          : undefined}
       >
         {isProcessing && (
           <span className="session-tab-processing-dot w-1.5 h-1.5 rounded-full bg-[var(--nim-primary)] animate-pulse" />
@@ -138,6 +145,15 @@ const SessionTab: React.FC<{
             onKeyDown={handleRenameKeyDown}
             onBlur={handleRenameSubmit}
             onClick={(e) => e.stopPropagation()}
+          />
+        ) : registryEntry?.namingMode ? (
+          // Tabs in one workstream often share a card; the purpose tells them apart.
+          <SessionIdentityLabel
+            session={{ title, namingMode: registryEntry.namingMode, cardIdentity: registryEntry.cardIdentity }}
+            onOpenCard={navigateToTrackerItem}
+            untitledLabel="Untitled"
+            keyFocusable={false}
+            className={`session-tab-title max-w-[240px] ${hasUnread ? 'font-semibold' : ''}`}
           />
         ) : (
           <span className={`session-tab-title max-w-[150px] overflow-hidden text-ellipsis ${hasUnread ? 'font-semibold' : ''}`}>

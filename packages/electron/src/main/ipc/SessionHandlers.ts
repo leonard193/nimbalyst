@@ -13,7 +13,9 @@ import {
 import type { UpdateSessionMetadataPayload } from '@nimbalyst/runtime/ai/adapters/sessionStore';
 import {
     normalizeCardSessionIdentity,
+    readSessionNamingFields,
     userRenameMetadata,
+    type CardSessionIdentity,
 } from '@nimbalyst/runtime/ai/server/cardSessionNaming';
 import path from "path";
 import { BrowserWindow } from 'electron';
@@ -32,7 +34,13 @@ import { inheritedOwnership, stripOwnerControlledMetadata } from '../services/ex
 import { readSessionSubtree } from '../services/sessionHierarchy';
 import { isLocalWikiItemId } from '../services/localWiki/localWikiItemIds';
 import { createTrailingSingleFlight } from '../utils/asyncCache';
-import { CARD_SESSIONS_QUERY, notifyCardChanged, setCardSessionTitleFollowerDeps } from '../services/cardSessionTitleFollower';
+import {
+    CARD_SESSIONS_QUERY,
+    NAMED_CARD_SESSIONS_QUERY,
+    notifyCardChanged,
+    numberRepeatedPurpose,
+    setCardSessionTitleFollowerDeps,
+} from '../services/cardSessionTitleFollower';
 import { onTrackerItemApplied } from '../services/TrackerSyncManager';
 
 // Several listeners refresh the list on one event; eight identical calls in the
@@ -212,6 +220,19 @@ export function invalidateSessionFilesCache(workspacePath: string): void {
     sessionEditorsCache.delete(workspacePath);
 }
 
+function broadcastSessionUpdate(sessionId: string, update: Record<string, unknown>): void {
+    for (const window of BrowserWindow.getAllWindows()) {
+        if (!window.isDestroyed()) {
+            window.webContents.send('sessions:session-updated', sessionId, update);
+        }
+    }
+}
+
+/** A card-named title change carries the identity, so every surface can show key, title and purpose. */
+function notifyCardNamedSession(sessionId: string, title: string, cardIdentity: CardSessionIdentity): void {
+    broadcastSessionUpdate(sessionId, { title, namingMode: 'card', cardIdentity });
+}
+
 export async function registerSessionHandlers() {
     if (handlersRegistered) {
         console.log('[SessionHandlers] Handlers already registered, skipping');
@@ -228,13 +249,7 @@ export async function registerSessionHandlers() {
             return rows;
         },
         setCardIdentity: (sessionId, identity) => sessionManager.setCardIdentity(sessionId, identity),
-        notifyTitle: (sessionId, title) => {
-            for (const window of BrowserWindow.getAllWindows()) {
-                if (!window.isDestroyed()) {
-                    window.webContents.send('sessions:session-updated', sessionId, { title });
-                }
-            }
-        },
+        notifyTitle: (sessionId, title, identity) => notifyCardNamedSession(sessionId, title, identity),
     });
     // Remote edits and server-assigned issue keys arrive here.
     onTrackerItemApplied((_workspacePath, applied) => {
@@ -332,25 +347,39 @@ export async function registerSessionHandlers() {
 
     // Update session title (a user rename; a card-named session becomes custom-named)
     safeHandle('sessions:update-title', async (event, sessionId: string, title: string) => {
+        const before = await AISessionsRepository.get(sessionId);
         await sessionManager.updateSessionTitle(sessionId, title, {
             force: true,
             markAsNamed: true,
             source: 'user',
         });
+        if (userRenameMetadata(before?.metadata)) {
+            broadcastSessionUpdate(sessionId, { title, namingMode: 'custom' });
+        }
     });
 
     // Make a session's name follow its primary tracker card. Called on launch
     // from a card before the first turn, and to return a custom-named session
     // to its card name.
-    safeHandle('sessions:set-card-identity', async (event, sessionId: string, identity: unknown) => {
+    // `numberRepeatedPurpose` (set on launch) turns a purpose another chat on
+    // the same card already uses into `<purpose> 2`, `<purpose> 3`, ...
+    safeHandle('sessions:set-card-identity', async (
+        event,
+        sessionId: string,
+        identity: unknown,
+        options?: { numberRepeatedPurpose?: boolean },
+    ) => {
         if (!sessionId) throw new Error('sessionId is required');
-        const title = await sessionManager.setCardIdentity(sessionId, normalizeCardSessionIdentity(identity));
-        for (const window of BrowserWindow.getAllWindows()) {
-            if (!window.isDestroyed()) {
-                window.webContents.send('sessions:session-updated', sessionId, { title });
-            }
+        let normalized = normalizeCardSessionIdentity(identity);
+        if (options?.numberRepeatedPurpose) {
+            normalized = await numberRepeatedPurpose(sessionId, normalized, async () => {
+                const { rows } = await database.query<{ id: string; metadata: unknown }>(NAMED_CARD_SESSIONS_QUERY);
+                return rows;
+            });
         }
-        return { success: true, title };
+        const title = await sessionManager.setCardIdentity(sessionId, normalized);
+        notifyCardNamedSession(sessionId, title, normalized);
+        return { success: true, title, cardIdentity: normalized };
     });
 
     // Update session model
@@ -416,6 +445,7 @@ export async function registerSessionHandlers() {
             if (updates.metadata) {
                 updates.metadata = stripOwnerControlledMetadata(updates.metadata);
             }
+            let switchedToCustomName = false;
             if (updates.title !== undefined) {
                 // A rename from the session list or workstream header is a user
                 // rename: lock out auto-naming, and keep a card-named session's
@@ -424,6 +454,7 @@ export async function registerSessionHandlers() {
                 const renameMetadata = userRenameMetadata(currentSession.metadata);
                 if (renameMetadata) {
                     updates.metadata = { ...updates.metadata, ...renameMetadata };
+                    switchedToCustomName = true;
                 }
             }
             await AISessionsRepository.updateMetadata(sessionId, updates);
@@ -445,6 +476,7 @@ export async function registerSessionHandlers() {
             // This covers model/provider/title updates from SessionTranscript and similar paths.
             const rendererUpdate: Record<string, unknown> = {};
             if (updates.title !== undefined) rendererUpdate.title = updates.title;
+            if (switchedToCustomName) rendererUpdate.namingMode = 'custom';
             if (updates.provider !== undefined) rendererUpdate.provider = updates.provider;
             if (updates.model !== undefined) rendererUpdate.model = updates.model;
             if (updates.sessionType !== undefined) rendererUpdate.sessionType = updates.sessionType;
@@ -679,6 +711,7 @@ export async function registerSessionHandlers() {
                     phase: metadata.phase || undefined,
                     tags: Array.isArray(metadata.tags) ? metadata.tags : undefined,
                     linkedTrackerItemIds: Array.isArray(metadata.linkedTrackerItemIds) ? metadata.linkedTrackerItemIds : undefined,
+                    ...readSessionNamingFields(metadata),
                 };
             });
 

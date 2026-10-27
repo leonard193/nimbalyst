@@ -41,8 +41,9 @@ export function isTrackerLaunchForWorkspace(
 }
 
 /**
- * Name a just-created session after its card before the first turn. A naming
- * failure is logged and the launch continues with the creation title.
+ * Name a just-created session after its card before the first turn. A purpose
+ * another chat on the card already uses is numbered (`Implementation 2`). A
+ * naming failure is logged and the launch continues with the creation title.
  */
 export async function applyTrackerLaunchIdentity(
   sessionId: string,
@@ -50,7 +51,7 @@ export async function applyTrackerLaunchIdentity(
   invoke: (channel: string, ...args: unknown[]) => Promise<unknown>,
 ): Promise<boolean> {
   try {
-    await invoke('sessions:set-card-identity', sessionId, context.cardIdentity);
+    await invoke('sessions:set-card-identity', sessionId, context.cardIdentity, { numberRepeatedPurpose: true });
     return true;
   } catch (err) {
     console.error('[trackerSessionLaunch] Failed to name session after its card:', err);
@@ -111,19 +112,30 @@ export function assertTrackerItemInWorkspace(
   }
 }
 
+/** What a launch from a card is for. Absent means the default purpose. */
+export interface TrackerLaunchOptions {
+  purpose?: string;
+}
+
 export function buildTrackerLaunchContext(
   trackerItemId: string,
   trackerItem?: TrackerRecord,
+  options?: TrackerLaunchOptions,
 ): TrackerLaunchContext {
   const title = trackerItem ? getRecordTitle(trackerItem) : trackerItemId;
   const itemId = trackerItem?.issueKey || trackerItemId;
+  const purpose = options?.purpose?.replace(/\s+/g, ' ').trim() || DEFAULT_CARD_SESSION_PURPOSE;
   const cardIdentity: CardSessionIdentity = {
     primaryTrackerId: trackerItemId,
     ...(trackerItem?.issueKey ? { issueKey: trackerItem.issueKey } : {}),
     cardTitle: title,
-    purpose: DEFAULT_CARD_SESSION_PURPOSE,
+    purpose,
   };
-  const lines: string[] = [`implement tracker item ${itemId}: ${title}`];
+  // The default draft asks for implementation; another purpose names itself
+  // so a review chat does not start by implementing the card.
+  const lines: string[] = purpose === DEFAULT_CARD_SESSION_PURPOSE
+    ? [`implement tracker item ${itemId}: ${title}`]
+    : [`${purpose} for tracker item ${itemId}: ${title}`];
 
   if (trackerItem) {
     const status = getRecordStatus(trackerItem);

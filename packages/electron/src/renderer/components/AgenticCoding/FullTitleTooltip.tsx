@@ -61,7 +61,10 @@ export function FullTitleTooltip({ label, className, children }: FullTitleToolti
             letterSpacing: computedStyle.letterSpacing,
             lineHeight: computedStyle.lineHeight,
           });
-          setIsOpen(titleElement.scrollWidth > titleElement.clientWidth);
+          // A structured label (card key, title, purpose) truncates its parts, not itself.
+          const truncatedPart = Array.from(titleElement.querySelectorAll<HTMLElement>('.truncate'))
+            .some((part) => part.scrollWidth > part.clientWidth);
+          setIsOpen(titleElement.scrollWidth > titleElement.clientWidth || truncatedPart);
         }}
         onMouseLeave={() => setIsOpen(false)}
       >

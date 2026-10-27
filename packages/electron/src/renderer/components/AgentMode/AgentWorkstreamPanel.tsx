@@ -68,6 +68,7 @@ import {
   sessionArchivedAtom,
   sessionStoreAtom,
   sessionRegistryAtom,
+  sessionRegistryEntryAtom,
   sessionParentIdDerivedAtom,
   sessionWorktreeIdAtom,
   loadSessionChildrenAtom,
@@ -116,6 +117,9 @@ import {
   setSessionTagsAtom,
 } from '../../store/atoms/sessionKanban';
 import { defaultAgentModelAtom } from '../../store/atoms/appSettings';
+import { SessionIdentityLabel } from '../SessionIdentity/SessionIdentityLabel';
+import { SessionIdentityEditor } from '../SessionIdentity/SessionIdentityEditor';
+import { navigateToTrackerItem } from '../PullRequestMode/trackerNavigation';
 
 export interface AgentWorkstreamPanelRef {
   closeActiveTab: () => void;
@@ -504,6 +508,7 @@ const WorkstreamHeader: React.FC<{
   onShowArchiveDialog?: () => void;
 }> = React.memo(({ workstreamId, workspacePath, activeSessionId, worktreeId, worktreePath, onArchiveStatusChange, onOpenTerminal, onCreateNewTerminal, onShowArchiveDialog }) => {
   const title = useAtomValue(workstreamTitleAtom(workstreamId));
+  const registryEntry = useAtomValue(sessionRegistryEntryAtom(workstreamId));
   const isProcessing = useAtomValue(workstreamProcessingAtom(workstreamId));
   const sessionData = useAtomValue(sessionStoreAtom(workstreamId));
   const layoutMode = useAtomValue(workstreamLayoutModeAtom(workstreamId));
@@ -700,13 +705,18 @@ const WorkstreamHeader: React.FC<{
               onKeyDown={handleKeyDown}
             />
           ) : (
-            <h2
-              className="workstream-header-title max-w-full m-0 text-sm font-semibold text-[var(--nim-text)] whitespace-nowrap overflow-hidden text-ellipsis leading-tight cursor-pointer py-0.5 px-1 rounded transition-colors duration-150 hover:bg-[var(--nim-bg-hover)]"
-              onClick={handleTitleClick}
-              title="Click to rename"
-            >
-              {title}
-            </h2>
+            <div className="workstream-header-title-row flex items-center gap-1 max-w-full min-w-0">
+              <h2
+                className="workstream-header-title min-w-0 max-w-full m-0 text-sm font-semibold text-[var(--nim-text)] whitespace-nowrap overflow-hidden leading-tight cursor-pointer py-0.5 px-1 rounded transition-colors duration-150 hover:bg-[var(--nim-bg-hover)]"
+                onClick={handleTitleClick}
+              >
+                <SessionIdentityLabel
+                  session={{ title, namingMode: registryEntry?.namingMode, cardIdentity: registryEntry?.cardIdentity }}
+                  onOpenCard={navigateToTrackerItem}
+                />
+              </h2>
+              {registryEntry && <SessionIdentityEditor session={registryEntry} />}
+            </div>
           )}
           <div className="workstream-header-meta-row flex items-center gap-1.5 w-full min-w-0">
             {worktreeChipName && (

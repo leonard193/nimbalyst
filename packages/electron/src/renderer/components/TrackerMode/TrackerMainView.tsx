@@ -115,6 +115,7 @@ import {
   createTrackerWorktreeSession,
   isTrackerLaunchForWorkspace,
   type TrackerLaunchContext,
+  type TrackerLaunchOptions,
 } from './trackerSessionLaunch';
 import { trackTeamAnalyticsEvent } from '../../utils/teamAnalytics';
 import { TrackerQuickAddOverlay } from './TrackerQuickAddOverlay';
@@ -448,7 +449,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   }, []);
 
   /** Launch a new AI session linked to a tracker item */
-  const handleLaunchSession = useCallback(async (trackerItemId: string) => {
+  const handleLaunchSession = useCallback(async (trackerItemId: string, options?: TrackerLaunchOptions) => {
     const trackerItem = store.get(trackerItemsMapAtom).get(trackerItemId);
     try {
       assertTrackerItemInWorkspace(trackerItem, workspacePath);
@@ -457,7 +458,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       return;
     }
     try {
-      const trackerContext = buildTrackerLaunchContext(trackerItemId, trackerItem);
+      const trackerContext = buildTrackerLaunchContext(trackerItemId, trackerItem, options);
 
       // Derive provider from the user's default model rather than hardcoding
       // 'claude-code'. Mirrors AgentMode.createNewSession so a Codex-only
@@ -505,7 +506,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
   }, [workspacePath, refreshSessionList, setSelectedWorkstream, setWindowMode, defaultModel]);
 
   /** Launch a new isolated worktree session linked to a tracker item. */
-  const handleLaunchWorktree = useCallback((trackerItemId: string) => {
+  const handleLaunchWorktree = useCallback((trackerItemId: string, options?: TrackerLaunchOptions) => {
     const trackerItem = store.get(trackerItemsMapAtom).get(trackerItemId);
     try {
       assertTrackerItemInWorkspace(trackerItem, workspacePath);
@@ -513,7 +514,7 @@ export const TrackerMainView: React.FC<TrackerMainViewProps> = ({
       errorNotificationService.showError('Session not started', (err as Error).message);
       return;
     }
-    setPendingWorktreeLaunch(buildTrackerLaunchContext(trackerItemId, trackerItem));
+    setPendingWorktreeLaunch(buildTrackerLaunchContext(trackerItemId, trackerItem, options));
   }, [workspacePath]);
 
   const handleCreateTrackerWorktree = useCallback(async (

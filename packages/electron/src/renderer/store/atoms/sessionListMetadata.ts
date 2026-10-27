@@ -34,6 +34,8 @@ export function sessionListMetadata(
     ...(s.linkedTrackerItemIds && {
       linkedTrackerItemIds: s.linkedTrackerItemIds,
     }),
+    ...(s.namingMode && { namingMode: s.namingMode }),
+    ...(s.cardIdentity && { cardIdentity: s.cardIdentity }),
     ...(s.contextUsage && { contextUsage: s.contextUsage }),
     ...(s.agentRole && { agentRole: s.agentRole }),
     ...(s.createdBySessionId !== undefined && {

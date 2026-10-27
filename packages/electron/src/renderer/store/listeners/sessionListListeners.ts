@@ -18,6 +18,27 @@ import {
 } from '../atoms/sessions';
 import { workstreamStateAtom } from '../atoms/workstreamState';
 import { sessionRefMapAtom, type SessionRefMeta } from '@nimbalyst/runtime/ui/AgentTranscript/session/sessionRefAtoms';
+import {
+  readCardSessionIdentity,
+  readSessionNamingMode,
+  type CardSessionIdentity,
+  type SessionNamingMode,
+} from '@nimbalyst/runtime/ai/server/cardSessionNaming';
+
+/**
+ * Card naming fields in a `sessions:session-updated` payload. A user rename
+ * sends `namingMode: 'custom'` alone; the stored card identity is kept.
+ */
+export function sessionNamingUpdate(
+  updates: Record<string, unknown>,
+): { namingMode?: SessionNamingMode; cardIdentity?: CardSessionIdentity } {
+  const namingMode = readSessionNamingMode(updates);
+  const cardIdentity = readCardSessionIdentity(updates);
+  return {
+    ...(namingMode && { namingMode }),
+    ...(cardIdentity && { cardIdentity }),
+  };
+}
 
 // Track pending refresh to debounce rapid-fire events
 let pendingRefreshTimer: NodeJS.Timeout | null = null;
@@ -91,6 +112,7 @@ export function initSessionListListeners(): () => void {
         ...(updates.updatedAt !== undefined && { updatedAt: updates.updatedAt as number }),
         ...(updates.isArchived !== undefined && { isArchived: updates.isArchived as boolean }),
         ...(updates.isPinned !== undefined && { isPinned: updates.isPinned as boolean }),
+        ...sessionNamingUpdate(updates),
       });
       store.set(sessionRegistryAtom, registry);
     }

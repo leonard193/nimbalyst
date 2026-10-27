@@ -17,6 +17,7 @@
 import React, { useCallback } from 'react';
 import { useAtomValue, useSetAtom } from 'jotai';
 import { TrackerItemDetail } from '../TrackerMode/TrackerItemDetail';
+import type { TrackerLaunchOptions } from '../TrackerMode/trackerSessionLaunch';
 import {
   trackerResourceId,
   workstreamTrackerFocusAtom,
@@ -34,8 +35,8 @@ interface TrackerResourceEditorProps {
   onOpenTracker?: (trackerItemId: string) => void;
   /** Switch the workstream to Agent Mode for a spawned session. */
   onSwitchToAgentMode?: (sessionId: string) => void;
-  onLaunchSession?: (trackerItemId: string) => void;
-  onLaunchWorktree?: (trackerItemId: string) => void;
+  onLaunchSession?: (trackerItemId: string, options?: TrackerLaunchOptions) => void;
+  onLaunchWorktree?: (trackerItemId: string, options?: TrackerLaunchOptions) => void;
 }
 
 export const TrackerResourceEditor: React.FC<TrackerResourceEditorProps> = ({

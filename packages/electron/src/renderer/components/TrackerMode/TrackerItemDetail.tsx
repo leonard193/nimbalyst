@@ -66,6 +66,11 @@ import {
   collabProductStatusAtom,
 } from '../../store/atoms/collabEditor';
 import { isLocalWikiRecord } from '../../services/localWikiTrackerRecords';
+import type { TrackerLaunchOptions } from './trackerSessionLaunch';
+import { DEFAULT_CARD_SESSION_PURPOSE } from '@nimbalyst/runtime/ai/server/cardSessionNaming';
+import { PurposePicker } from '../SessionIdentity/PurposePicker';
+import { SessionIdentityLabel } from '../SessionIdentity/SessionIdentityLabel';
+import { getSessionIdentityDisplay } from '../SessionIdentity/sessionIdentityDisplay';
 import './TrackerItemDetail.css';
 
 interface TrackerItemDetailProps {
@@ -76,8 +81,8 @@ interface TrackerItemDetailProps {
   onSwitchToAgentMode?: (sessionId: string) => void;
   /** Select a file-linked session in the host's standard chat panel. */
   onOpenSessionInChat?: (sessionId: string) => void;
-  onLaunchSession?: (trackerItemId: string) => void;
-  onLaunchWorktree?: (trackerItemId: string) => void;
+  onLaunchSession?: (trackerItemId: string, options?: TrackerLaunchOptions) => void;
+  onLaunchWorktree?: (trackerItemId: string, options?: TrackerLaunchOptions) => void;
   onArchive?: (itemId: string, archive: boolean) => void;
   onDelete?: (itemId: string) => void;
   /** Open another tracker item (relationship pill / backlink click). */
@@ -313,6 +318,11 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
   const linkedSessionIds = useMemo(() => new Set(linkedSessions.map((session) => session.id)), [linkedSessions]);
   const canLinkExistingSession = Boolean(item && workspacePath);
   const [isLinkingExistingSession, setIsLinkingExistingSession] = useState(false);
+  // Purpose for the next launch from this card; back to the default after each launch.
+  const [launchPurpose, setLaunchPurpose] = useState(DEFAULT_CARD_SESSION_PURPOSE);
+  useEffect(() => {
+    setLaunchPurpose(DEFAULT_CARD_SESSION_PURPOSE);
+  }, [item?.id]);
   const [sessionSearchQuery, setSessionSearchQuery] = useState('');
   const [linkingSessionId, setLinkingSessionId] = useState<string | null>(null);
   const [linkSessionError, setLinkSessionError] = useState<string | null>(null);
@@ -974,10 +984,22 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
                     {isLinkingExistingSession ? 'Cancel' : 'Link Existing'}
                   </button>
                 )}
+                {(onLaunchSession || onLaunchWorktree) && (
+                  <PurposePicker
+                    value={launchPurpose}
+                    onChange={setLaunchPurpose}
+                    label="For"
+                    className="tracker-launch-purpose max-w-[160px]"
+                    testIdBase="tracker-launch-purpose"
+                  />
+                )}
                 {onLaunchSession && (
                   <button
                     className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium rounded text-nim-muted hover:text-nim hover:bg-nim-tertiary transition-colors"
-                    onClick={() => onLaunchSession(item.id)}
+                    onClick={() => {
+                      onLaunchSession(item.id, { purpose: launchPurpose });
+                      setLaunchPurpose(DEFAULT_CARD_SESSION_PURPOSE);
+                    }}
                     title="Launch a new AI session for this item"
                   >
                     <MaterialSymbol icon="add" size={14} />
@@ -987,7 +1009,10 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
                 {onLaunchWorktree && (
                   <button
                     className="flex items-center gap-1 px-1.5 py-0.5 text-[11px] font-medium rounded text-nim-muted hover:text-nim hover:bg-nim-tertiary transition-colors"
-                    onClick={() => onLaunchWorktree(item.id)}
+                    onClick={() => {
+                      onLaunchWorktree(item.id, { purpose: launchPurpose });
+                      setLaunchPurpose(DEFAULT_CARD_SESSION_PURPOSE);
+                    }}
                     title="Launch a new isolated worktree session for this item"
                   >
                     <MaterialSymbol icon="account_tree" size={14} />
@@ -1046,16 +1071,22 @@ export const TrackerItemDetail: React.FC<TrackerItemDetailProps> = ({
                 {linkedSessions.map((session) => (
                   <button
                     key={session.id}
-                    className="w-full flex items-center gap-2 px-2 py-1.5 rounded text-left hover:bg-nim-tertiary transition-colors group"
+                    className="tracker-linked-session w-full flex items-center gap-2 px-2 py-1.5 rounded text-left hover:bg-nim-tertiary transition-colors group"
                     onClick={() => onSwitchToAgentMode?.(session.id)}
                     title={`Open session: ${session.title}`}
+                    aria-label={`Open session: ${getSessionIdentityDisplay(session).fullLabel}`}
                   >
                     <span className="shrink-0 flex items-center text-nim-muted">
                       <ProviderIcon provider={session.provider || 'claude'} size={14} />
                     </span>
-                    <span className="flex-1 text-xs text-nim truncate">
-                      {session.title || 'Untitled session'}
-                    </span>
+                    {/* A chat whose primary card is another card links there; this card's own key is not a link. */}
+                    <SessionIdentityLabel
+                      session={session}
+                      onOpenCard={session.cardIdentity?.primaryTrackerId !== item.id ? onOpenItem : undefined}
+                      keyFocusable={false}
+                      nativeTitle={false}
+                      className="flex-1 text-xs text-nim"
+                    />
                     <span className="text-[10px] text-nim-faint shrink-0">
                       {getRelativeTimeString(session.updatedAt)}
                     </span>
