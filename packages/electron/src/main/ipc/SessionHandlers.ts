@@ -41,6 +41,7 @@ import {
     numberRepeatedPurpose,
     setCardSessionTitleFollowerDeps,
 } from '../services/cardSessionTitleFollower';
+import { setCardNamingAdoptionDeps } from '../services/cardNamingAdoptionService';
 import { onTrackerItemApplied } from '../services/TrackerSyncManager';
 
 // Several listeners refresh the list on one event; eight identical calls in the
@@ -250,6 +251,14 @@ export async function registerSessionHandlers() {
         },
         setCardIdentity: (sessionId, identity) => sessionManager.setCardIdentity(sessionId, identity),
         notifyTitle: (sessionId, title, identity) => notifyCardNamedSession(sessionId, title, identity),
+    });
+    // Existing sessions move into card naming only through the explicit adoption tool.
+    setCardNamingAdoptionDeps({
+        adoptCardIdentity: (sessionId, identity, options) => sessionManager.adoptCardIdentity(sessionId, identity, options),
+        undoCardIdentityAdoption: (sessionId) => sessionManager.undoCardIdentityAdoption(sessionId),
+        notifyAdopted: (sessionId, title, identity) => notifyCardNamedSession(sessionId, title, identity),
+        // Null fields tell renderers the session no longer has a naming mode.
+        notifyRestored: (sessionId, title) => broadcastSessionUpdate(sessionId, { title, namingMode: null, cardIdentity: null }),
     });
     // Remote edits and server-assigned issue keys arrive here.
     onTrackerItemApplied((_workspacePath, applied) => {

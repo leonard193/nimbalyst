@@ -85,6 +85,16 @@ import {
 } from './trackerToolResult';
 import { notifyCardChanged, setPrimaryCard } from '../../services/cardSessionTitleFollower';
 import { normalizeCardSessionIdentity } from '@nimbalyst/runtime/ai/server/cardSessionNaming';
+import {
+  ADOPTION_SESSIONS_QUERY,
+  applyCardNamingAdoption,
+  getCardNamingAdoptionDeps,
+  previewCardNamingAdoption,
+  toAdoptionInputs,
+  undoCardNamingAdoption,
+  type AdoptionApplyRequest,
+  type AdoptionCardRecord,
+} from '../../services/cardNamingAdoptionService';
 
 export {
   handleTrackerDefineType,
@@ -987,6 +997,40 @@ export const trackerToolSchemas = [
         },
       },
       required: ["trackerId"],
+    },
+  },
+  {
+    name: "tracker_session_naming_adoption",
+    description:
+      "Move existing sessions in this workspace into card naming, on explicit request only.\n\n- action 'preview' (read-only): every session, its group (direct, ambiguous, associated, general, adopted), the proposed action and title, and the reason. A title prefix is never treated as a link; only linked tracker items count.\n- action 'apply': adopt the listed sessions. Each entry names the sessionId, the expectedTitle shown in the preview, a primaryTrackerId already linked to the session, and the purpose. A session whose title changed since the preview is refused, and adoption never adds a link. Each adopted session keeps an undo record. Applying the same entries again changes nothing.\n- action 'undo': restore the listed sessions to their previous titles, unless they were renamed since.\n\nShow the preview to the user and apply only entries they approved; any entry that replaces a title needs their approval.",
+    inputSchema: {
+      type: "object" as const,
+      properties: {
+        action: {
+          type: "string",
+          enum: ["preview", "apply", "undo"],
+          description: "preview (default, read-only), apply or undo.",
+        },
+        apply: {
+          type: "array",
+          description: "For action 'apply': the approved entries.",
+          items: {
+            type: "object",
+            properties: {
+              sessionId: { type: "string" },
+              expectedTitle: { type: "string", description: "The session title as shown in the preview." },
+              primaryTrackerId: { type: "string", description: "Tracker item id, already linked to the session." },
+              purpose: { type: "string", description: "The purpose after the card name, e.g. 'Implementation'." },
+            },
+            required: ["sessionId", "expectedTitle", "primaryTrackerId", "purpose"],
+          },
+        },
+        undo: {
+          type: "array",
+          description: "For action 'undo': session ids to restore.",
+          items: { type: "string" },
+        },
+      },
     },
   },
   {
@@ -3159,6 +3203,84 @@ export async function handleTrackerLinkSession(
       ],
       isError: true,
     };
+  }
+}
+
+/** Read the workspace's sessions and cards in the form the adoption planner takes. */
+async function loadCardNamingAdoptionInputs(db: any, workspacePath: string) {
+  const sessionRows = await db.query(ADOPTION_SESSIONS_QUERY, [workspacePath]);
+  const cardRows = await db.query(`SELECT * FROM tracker_items WHERE workspace = $1`, [workspacePath]);
+  const cards: AdoptionCardRecord[] = cardRows.rows.map((row: any) => {
+    const item = rowToTrackerItem(row);
+    return {
+      id: item.id,
+      issueKey: getAssignedIssueKey(item) ?? undefined,
+      title: item.title || item.id,
+      aliases: row.id !== item.id ? [row.id] : [],
+    };
+  });
+  return toAdoptionInputs(sessionRows.rows, cards);
+}
+
+export async function handleTrackerSessionNamingAdoption(
+  args: any,
+  workspacePath: string | undefined
+): Promise<McpToolResult> {
+  const fail = (text: string): McpToolResult => ({ content: [{ type: "text", text }], isError: true });
+  if (!workspacePath) return fail("Error: No workspace path available.");
+  const action = args?.action ?? "preview";
+  try {
+    const { getDatabase } = await import("../../database/initialize");
+    const db = getDatabase();
+
+    if (action === "undo") {
+      const ids = Array.isArray(args.undo) ? args.undo.filter((id: unknown): id is string => typeof id === "string" && !!id) : [];
+      if (ids.length === 0) return fail("Error: undo needs at least one session id.");
+      const { sessions } = await loadCardNamingAdoptionInputs(db, workspacePath);
+      const inWorkspace = new Set(sessions.map(session => session.id));
+      const outside = ids.filter((id: string) => !inWorkspace.has(id));
+      if (outside.length) return fail(`Error: not sessions of this workspace: ${outside.join(", ")}`);
+      const results = await undoCardNamingAdoption(ids, getCardNamingAdoptionDeps());
+      const restored = results.filter(result => result.status === "restored").length;
+      return {
+        content: [{ type: "text", text: JSON.stringify({ structured: { action: "undo", results }, summary: `Restored ${restored} of ${results.length} sessions.` }) }],
+        isError: false,
+      };
+    }
+
+    const inputs = await loadCardNamingAdoptionInputs(db, workspacePath);
+
+    if (action === "apply") {
+      const requests: AdoptionApplyRequest[] = Array.isArray(args.apply)
+        ? args.apply.filter((entry: any) => entry
+          && typeof entry.sessionId === "string"
+          && typeof entry.expectedTitle === "string"
+          && typeof entry.primaryTrackerId === "string"
+          && typeof entry.purpose === "string")
+        : [];
+      if (requests.length === 0 || requests.length !== (args.apply?.length ?? 0)) {
+        return fail("Error: apply needs entries with sessionId, expectedTitle, primaryTrackerId and purpose.");
+      }
+      const results = await applyCardNamingAdoption(requests, inputs, getCardNamingAdoptionDeps());
+      const applied = results.filter(result => result.status === "applied").length;
+      return {
+        content: [{ type: "text", text: JSON.stringify({ structured: { action: "apply", results }, summary: `Adopted ${applied} of ${results.length} sessions; see each result's status.` }) }],
+        isError: false,
+      };
+    }
+
+    if (action !== "preview") return fail(`Error: unknown action '${action}'. Use preview, apply or undo.`);
+    const { entries, counts } = previewCardNamingAdoption(inputs.sessions, inputs.cards);
+    return {
+      content: [{ type: "text", text: JSON.stringify({
+        structured: { action: "preview", workspacePath, cards: inputs.cards.length, counts, entries },
+        summary: `Preview of ${entries.length} sessions: ${counts.adopt ?? 0} adopt with the title unchanged, ${counts["adopt-renamed"] ?? 0} adopt with a new title, ${counts.keep ?? 0} kept, ${counts.needsDecision ?? 0} need the owner's decision. Nothing was changed.`,
+      }) }],
+      isError: false,
+    };
+  } catch (error) {
+    console.error("[MCP Server] tracker_session_naming_adoption failed:", error);
+    return fail(`Error in session naming adoption: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 

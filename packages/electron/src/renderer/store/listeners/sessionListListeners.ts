@@ -32,6 +32,8 @@ import {
 export function sessionNamingUpdate(
   updates: Record<string, unknown>,
 ): { namingMode?: SessionNamingMode; cardIdentity?: CardSessionIdentity } {
+  // An undone adoption sends explicit nulls: the session has no naming mode again.
+  if (updates.namingMode === null) return { namingMode: undefined, cardIdentity: undefined };
   const namingMode = readSessionNamingMode(updates);
   const cardIdentity = readCardSessionIdentity(updates);
   return {

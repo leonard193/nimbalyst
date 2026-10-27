@@ -188,6 +188,7 @@ export const TRACKER_TOOLS: readonly string[] = [
   'tracker_delete_type',
   'tracker_link_session',
   'tracker_unlink_session',
+  'tracker_session_naming_adoption',
   'tracker_link_file',
   'tracker_add_comment',
   'tracker_import',
