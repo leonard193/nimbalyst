@@ -356,7 +356,7 @@ describe("MessageStreamingHandler provisional title", () => {
     }
 
     expect(updateSessionTitle.mock.calls).toEqual([
-      ["fresh-session", "Prompt", { force: true, markAsNamed: false }],
+      ["fresh-session", "Prompt", { force: true, markAsNamed: false, source: "provisional" }],
     ]);
   });
 });

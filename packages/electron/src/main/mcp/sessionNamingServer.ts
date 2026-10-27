@@ -11,8 +11,10 @@
 import { ErrorCode, McpError } from "@modelcontextprotocol/sdk/types.js";
 
 // Store reference to the session manager functions (set once at startup)
+// Resolves false when the session's name follows its tracker card or a
+// user's custom name, so the title was left unchanged.
 let updateSessionTitleFn:
-  | ((sessionId: string, title: string) => Promise<void>)
+  | ((sessionId: string, title: string) => Promise<boolean | void>)
   | null = null;
 
 let updateSessionMetadataFn:
@@ -35,7 +37,7 @@ let getSessionPhaseFn:
  * Set the update function for session titles (called once at startup)
  */
 export function setUpdateSessionTitleFn(
-  updateTitleFn: (sessionId: string, title: string) => Promise<void>
+  updateTitleFn: (sessionId: string, title: string) => Promise<boolean | void>
 ) {
   updateSessionTitleFn = updateTitleFn;
 }
@@ -235,8 +237,12 @@ export async function dispatchSessionMetaTool(
         }
 
         try {
-          await updateSessionTitleFn!(aiSessionId, sessionName);
-          notes.push(`Set name: "${sessionName}"`);
+          const applied = await updateSessionTitleFn!(aiSessionId, sessionName);
+          notes.push(
+            applied === false
+              ? `Name unchanged: this session's name follows its tracker card or a name the user chose. Only the user can rename it.`
+              : `Set name: "${sessionName}"`
+          );
         } catch (error) {
           const errorMessage = error instanceof Error ? error.message : "Unknown error";
           console.error("[Session Naming MCP] Failed to update session title:", error);

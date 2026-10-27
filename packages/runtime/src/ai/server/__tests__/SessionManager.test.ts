@@ -262,3 +262,129 @@ describe('SessionManager.updateProviderSessionData clears', () => {
     expect(persisted?.metadata?.providerSessionId ?? null).toBeNull();
   });
 });
+
+/**
+ * Mirrors PGLiteSessionStore.updateMetadata for naming: `title` and
+ * `hasBeenNamed` are columns and `metadata` is shallow-merged JSON.
+ */
+class NamingSessionStore extends InMemorySessionStore {
+  readonly rows = new Map<string, { title: string; hasBeenNamed: boolean; metadata: Record<string, unknown> }>();
+
+  async create(payload: CreateSessionPayload): Promise<void> {
+    await super.create(payload);
+    this.rows.set(payload.id, { title: payload.title ?? 'Untitled', hasBeenNamed: payload.hasBeenNamed ?? false, metadata: {} });
+  }
+
+  async updateMetadata(sessionId: string, update: UpdateSessionMetadataPayload): Promise<void> {
+    const row = this.rows.get(sessionId);
+    if (!row) throw new Error('Session not found');
+    if (update.title !== undefined) row.title = update.title;
+    if (update.hasBeenNamed !== undefined) row.hasBeenNamed = update.hasBeenNamed;
+    if (update.metadata !== undefined) row.metadata = { ...row.metadata, ...update.metadata };
+  }
+
+  async get(sessionId: string): Promise<SessionData | null> {
+    const session = await super.get(sessionId);
+    const row = this.rows.get(sessionId);
+    if (!session || !row) return null;
+    return { ...session, title: row.title, hasBeenNamed: row.hasBeenNamed, metadata: row.metadata };
+  }
+
+  async updateTitleIfNotNamed(sessionId: string, title: string): Promise<boolean> {
+    const row = this.rows.get(sessionId);
+    if (!row || row.hasBeenNamed) return false;
+    row.title = title;
+    row.hasBeenNamed = true;
+    return true;
+  }
+}
+
+describe('SessionManager card-linked naming', () => {
+  const card = { primaryTrackerId: 'delivery-slice_20', issueKey: 'LEO-20', cardTitle: 'Keep card-linked chat names correct automatically' };
+  let store: NamingSessionStore;
+  let manager: SessionManager;
+
+  async function createSession(id: string): Promise<void> {
+    await store.create({ id, provider: 'claude-code', model: 'claude-code:opus', title: 'New Session', workspaceId: 'ws' } as CreateSessionPayload);
+  }
+
+  beforeEach(async () => {
+    store = new NamingSessionStore();
+    manager = new SessionManager(store);
+    await manager.initialize();
+    await createSession('s1');
+  });
+
+  it('names the session from the card and marks it named before the first turn', async () => {
+    const title = await manager.setCardIdentity('s1', { ...card, purpose: 'Implementation' });
+
+    expect(title).toBe('LEO-20 · Keep card-linked chat names correct automatically — Implementation');
+    expect(store.rows.get('s1')).toMatchObject({
+      title,
+      hasBeenNamed: true,
+      metadata: { namingMode: 'card', cardIdentity: { ...card, purpose: 'Implementation' } },
+    });
+  });
+
+  it('keeps a SYNTHETIC purpose through agent, provisional and auto-namer writes', async () => {
+    const title = await manager.setCardIdentity('s1', { ...card, purpose: 'SYNTHETIC Codex check' });
+
+    await expect(manager.updateSessionTitle('s1', 'Codex naming check', { force: true, markAsNamed: true, source: 'agent' })).resolves.toBe(false);
+    await expect(manager.updateSessionTitle('s1', 'implement tracker item LEO-20', { force: true, markAsNamed: false, source: 'provisional' })).resolves.toBe(false);
+    await expect(manager.updateSessionTitle('s1', 'Summary title', { force: true, markAsNamed: true })).resolves.toBe(false);
+
+    expect(store.rows.get('s1')).toMatchObject({ title, hasBeenNamed: true });
+    expect(title).toContain('SYNTHETIC Codex check');
+  });
+
+  it('treats a user rename as a custom name that agents cannot replace', async () => {
+    await manager.setCardIdentity('s1', { ...card, purpose: 'Implementation' });
+
+    await expect(manager.updateSessionTitle('s1', 'My own name', { force: true, markAsNamed: true, source: 'user' })).resolves.toBe(true);
+    await expect(manager.updateSessionTitle('s1', 'Agent name', { force: true, markAsNamed: true, source: 'agent' })).resolves.toBe(false);
+
+    expect(store.rows.get('s1')).toMatchObject({
+      title: 'My own name',
+      metadata: { namingMode: 'custom', cardIdentity: { ...card, purpose: 'Implementation' } },
+    });
+  });
+
+  it('returns a custom-named session to the card name', async () => {
+    await manager.setCardIdentity('s1', { ...card, purpose: 'Implementation' });
+    await manager.updateSessionTitle('s1', 'My own name', { force: true, markAsNamed: true, source: 'user' });
+
+    await manager.setCardIdentity('s1', { ...card, purpose: 'Implementation' });
+
+    expect(store.rows.get('s1')).toMatchObject({
+      title: 'LEO-20 · Keep card-linked chat names correct automatically — Implementation',
+      metadata: { namingMode: 'card' },
+    });
+  });
+
+  it('gives two chats on one card a common base and distinct purposes', async () => {
+    await createSession('s2');
+
+    const implementation = await manager.setCardIdentity('s1', { ...card, purpose: 'Implementation' });
+    const review = await manager.setCardIdentity('s2', { ...card, purpose: 'Independent review' });
+
+    expect(implementation).toBe('LEO-20 · Keep card-linked chat names correct automatically — Implementation');
+    expect(review).toBe('LEO-20 · Keep card-linked chat names correct automatically — Independent review');
+  });
+
+  it('still refuses agent renames after a restart', async () => {
+    const title = await manager.setCardIdentity('s1', { ...card, purpose: 'Implementation' });
+
+    const restarted = new SessionManager(store);
+    await restarted.initialize();
+
+    await expect(restarted.updateSessionTitle('s1', 'Agent name', { force: true, markAsNamed: true, source: 'agent' })).resolves.toBe(false);
+    expect(store.rows.get('s1')?.title).toBe(title);
+  });
+
+  it('leaves sessions without a card identity on the existing naming path', async () => {
+    await expect(manager.updateSessionTitle('s1', 'Agent name', { force: true, markAsNamed: true, source: 'agent' })).resolves.toBe(true);
+    await expect(manager.updateSessionTitle('s1', 'User name', { force: true, markAsNamed: true, source: 'user' })).resolves.toBe(true);
+
+    expect(store.rows.get('s1')).toMatchObject({ title: 'User name', metadata: {} });
+  });
+});

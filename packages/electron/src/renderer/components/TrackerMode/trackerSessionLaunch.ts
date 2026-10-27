@@ -8,6 +8,7 @@ import {
 import {
   buildCardSessionTitle,
   DEFAULT_CARD_SESSION_PURPOSE,
+  type CardSessionIdentity,
 } from '@nimbalyst/runtime/ai/server/cardSessionNaming';
 
 const MAX_WORKTREE_NAME_LENGTH = 64;
@@ -18,10 +19,12 @@ export interface TrackerLaunchContext {
   draftInput: string;
   worktreeName: string;
   /**
-   * Card-based title written before the first turn, so the session counts as
-   * named out-of-band and neither the provisional nor the provider namer
-   * replaces it.
+   * Primary card identity written before the first turn
+   * (`sessions:set-card-identity`), so the session counts as named out-of-band
+   * and its name follows the card instead of a provider summary.
    */
+  cardIdentity: CardSessionIdentity;
+  /** The display title built from `cardIdentity`. */
   sessionTitle: string;
 }
 
@@ -96,6 +99,12 @@ export function buildTrackerLaunchContext(
 ): TrackerLaunchContext {
   const title = trackerItem ? getRecordTitle(trackerItem) : trackerItemId;
   const itemId = trackerItem?.issueKey || trackerItemId;
+  const cardIdentity: CardSessionIdentity = {
+    primaryTrackerId: trackerItemId,
+    ...(trackerItem?.issueKey ? { issueKey: trackerItem.issueKey } : {}),
+    cardTitle: title,
+    purpose: DEFAULT_CARD_SESSION_PURPOSE,
+  };
   const lines: string[] = [`implement tracker item ${itemId}: ${title}`];
 
   if (trackerItem) {
@@ -122,10 +131,7 @@ export function buildTrackerLaunchContext(
       : trackerItemId,
     draftInput: lines.join('\n'),
     worktreeName: deriveTrackerWorktreeName(itemId, title),
-    sessionTitle: buildCardSessionTitle({
-      issueKey: trackerItem?.issueKey,
-      cardTitle: title,
-      purpose: DEFAULT_CARD_SESSION_PURPOSE,
-    }),
+    cardIdentity,
+    sessionTitle: buildCardSessionTitle(cardIdentity),
   };
 }

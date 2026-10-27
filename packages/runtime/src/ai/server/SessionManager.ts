@@ -29,6 +29,15 @@ import { parseContextUsageMessage } from './utils/contextUsage';
 import { fromDbBoolean } from '../../core/dbBoolean';
 import { TranscriptMigrationRepository } from '../../storage/repositories/TranscriptMigrationRepository';
 import { stagedAttachmentRegistry } from './attachments/stagedAttachmentRegistry';
+import {
+  buildCardSessionTitle,
+  canWriteSessionTitle,
+  CARD_IDENTITY_METADATA_KEY,
+  NAMING_MODE_METADATA_KEY,
+  readSessionNamingMode,
+  type CardSessionIdentity,
+  type SessionTitleSource,
+} from './cardSessionNaming';
 
 /** Parsed tool_progress event from the agent stream */
 interface ToolProgressEvent {
@@ -803,6 +812,12 @@ interface UpdateSessionTitleOptions {
    * Useful for provisional titles (false) or manual renames (true).
    */
   markAsNamed?: boolean;
+  /**
+   * Who is writing the title. Card-named and custom-named sessions accept only
+   * `user`; a user rename of a card-named session switches it to `custom`.
+   * Defaults to `system`.
+   */
+  source?: SessionTitleSource;
 }
 
 export class SessionManager {
@@ -1224,11 +1239,26 @@ export class SessionManager {
     }
   }
 
-  async updateSessionTitle(sessionId: string, title: string, options?: UpdateSessionTitleOptions): Promise<void> {
+  /**
+   * Write a session title. Returns false, without writing, when the session's
+   * name follows its primary tracker card or a user's custom name and the
+   * writer is not the user.
+   */
+  async updateSessionTitle(sessionId: string, title: string, options?: UpdateSessionTitleOptions): Promise<boolean> {
+    const source = options?.source ?? 'system';
+    const persisted = await AISessionsRepository.get(sessionId);
+    const namingMode = readSessionNamingMode(persisted?.metadata);
+    if (!canWriteSessionTitle(namingMode, source)) {
+      return false;
+    }
     if (options?.force) {
       const metadata: UpdateSessionMetadataPayload = { title };
       if (options.markAsNamed !== undefined) {
         (metadata as any).hasBeenNamed = options.markAsNamed;
+      }
+      if (namingMode === 'card' && source === 'user') {
+        // The card identity stays in metadata so the session can return to it.
+        metadata.metadata = { [NAMING_MODE_METADATA_KEY]: 'custom' };
       }
       await AISessionsRepository.updateMetadata(sessionId, metadata);
     } else {
@@ -1246,6 +1276,39 @@ export class SessionManager {
       }
       this.currentSession = updatedSession;
     }
+    return true;
+  }
+
+  /**
+   * Make a session's name follow a primary tracker card: store the identity
+   * and naming mode in metadata and write the display title built from them.
+   * Also the way back to automatic naming after a custom rename. Marks the
+   * session named, so a call before the first turn keeps providers from
+   * self-naming.
+   */
+  async setCardIdentity(sessionId: string, identity: CardSessionIdentity): Promise<string> {
+    const title = buildCardSessionTitle(identity);
+    await AISessionsRepository.updateMetadata(sessionId, {
+      title,
+      hasBeenNamed: true,
+      metadata: {
+        [NAMING_MODE_METADATA_KEY]: 'card',
+        [CARD_IDENTITY_METADATA_KEY]: identity,
+      },
+    } as UpdateSessionMetadataPayload);
+    if (this.currentSession?.id === sessionId) {
+      this.currentSession = {
+        ...this.currentSession,
+        title,
+        hasBeenNamed: true,
+        metadata: {
+          ...this.currentSession.metadata,
+          [NAMING_MODE_METADATA_KEY]: 'card',
+          [CARD_IDENTITY_METADATA_KEY]: identity,
+        },
+      };
+    }
+    return title;
   }
 
   async updateSessionModel(sessionId: string, model: string): Promise<void> {

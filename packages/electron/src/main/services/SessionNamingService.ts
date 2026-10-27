@@ -68,9 +68,9 @@ export class SessionNamingService {
         setUpdateSessionTitleFn((sessionId: string, title: string) =>
           this.applySessionTitle(sessionId, title)
         );
-        setClaudeCliAutoNameApplyTitleFn((sessionId: string, title: string) =>
-          this.applySessionTitle(sessionId, title)
-        );
+        setClaudeCliAutoNameApplyTitleFn(async (sessionId: string, title: string) => {
+          await this.applySessionTitle(sessionId, title);
+        });
 
         // Set the metadata update function (for tags, phase, etc.). The body
         // lives in applySessionMetadata so the commit-proposal path can reuse
@@ -150,13 +150,14 @@ export class SessionNamingService {
    * naming, worktree display name, and renderer broadcasts. Called by the
    * naming MCP server (agent-chosen titles) and by the claude-code-cli
    * auto-namer (NIM-822). Renames are allowed; the agent prompt instructs the
-   * agent not to rename a named session unless the user asks.
+   * agent not to rename a named session unless the user asks. Returns false
+   * when the session's name follows its tracker card or a custom name.
    */
-  public async applySessionTitle(sessionId: string, title: string): Promise<void> {
+  public async applySessionTitle(sessionId: string, title: string): Promise<boolean> {
     const sessionManager = this.sessionManager;
     if (!sessionManager) {
       console.warn('[SessionNamingService] applySessionTitle before start(); skipping');
-      return;
+      return false;
     }
     const windows = BrowserWindow.getAllWindows();
 
@@ -198,11 +199,18 @@ export class SessionNamingService {
 
       // Mark child as named so update_session_meta won't set name again, but keep model-based title
       await AISessionsRepository.updateMetadata(sessionId, { hasBeenNamed: true } as any);
-      return;
+      return true;
     }
 
     // Normal (non-blitz) session: update title and propagate to worktree.
-    await sessionManager.updateSessionTitle(sessionId, title, { force: true, markAsNamed: true });
+    const applied = await sessionManager.updateSessionTitle(sessionId, title, {
+      force: true,
+      markAsNamed: true,
+      source: 'agent',
+    });
+    if (!applied) {
+      return false;
+    }
     for (const window of windows) {
       window.webContents.send('session:title-updated', { sessionId, title });
     }
@@ -228,6 +236,7 @@ export class SessionNamingService {
         console.error('[SessionNamingService] Failed to update worktree display name:', error);
       }
     }
+    return true;
   }
 
   /**

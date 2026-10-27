@@ -50,6 +50,12 @@ describe('buildTrackerLaunchContext', () => {
         'Update this tracker item\'s status when done using tracker_update with id "NIM-1624".',
       ].join('\n'),
       worktreeName: 'nim-1624-launch-a-worktree-from-a-tracker',
+      cardIdentity: {
+        primaryTrackerId: 'feature_1624',
+        issueKey: 'NIM-1624',
+        cardTitle: 'Launch a Worktree from a Tracker',
+        purpose: 'Implementation',
+      },
       sessionTitle: 'NIM-1624 · Launch a Worktree from a Tracker — Implementation',
     });
   });
@@ -91,6 +97,8 @@ describe('buildTrackerLaunchContext', () => {
     }));
 
     expect(context.sessionTitle).toBe('Draft card — Implementation');
+    expect(context.cardIdentity).not.toHaveProperty('issueKey');
+    expect(context.cardIdentity.primaryTrackerId).toBe('task_1');
   });
 
   it('keeps a long card title whole instead of truncating the key or purpose', () => {

@@ -11,6 +11,11 @@ import {
     type AIProviderType,
 } from '@nimbalyst/runtime/ai/server/types';
 import type { UpdateSessionMetadataPayload } from '@nimbalyst/runtime/ai/adapters/sessionStore';
+import {
+    NAMING_MODE_METADATA_KEY,
+    normalizeCardSessionIdentity,
+    readSessionNamingMode,
+} from '@nimbalyst/runtime/ai/server/cardSessionNaming';
 import path from "path";
 import { BrowserWindow } from 'electron';
 import { safeHandle, safeOn } from '../utils/ipcRegistry';
@@ -299,12 +304,27 @@ export async function registerSessionHandlers() {
         await sessionManager.deleteSession(sessionId);
     });
 
-    // Update session title
+    // Update session title (a user rename; a card-named session becomes custom-named)
     safeHandle('sessions:update-title', async (event, sessionId: string, title: string) => {
         await sessionManager.updateSessionTitle(sessionId, title, {
             force: true,
             markAsNamed: true,
+            source: 'user',
         });
+    });
+
+    // Make a session's name follow its primary tracker card. Called on launch
+    // from a card before the first turn, and to return a custom-named session
+    // to its card name.
+    safeHandle('sessions:set-card-identity', async (event, sessionId: string, identity: unknown) => {
+        if (!sessionId) throw new Error('sessionId is required');
+        const title = await sessionManager.setCardIdentity(sessionId, normalizeCardSessionIdentity(identity));
+        for (const window of BrowserWindow.getAllWindows()) {
+            if (!window.isDestroyed()) {
+                window.webContents.send('sessions:session-updated', sessionId, { title });
+            }
+        }
+        return { success: true, title };
     });
 
     // Update session model
@@ -369,6 +389,15 @@ export async function registerSessionHandlers() {
 
             if (updates.metadata) {
                 updates.metadata = stripOwnerControlledMetadata(updates.metadata);
+            }
+            if (updates.title !== undefined) {
+                // A rename from the session list or workstream header is a user
+                // rename: lock out auto-naming, and keep a card-named session's
+                // card identity while switching it to the custom name.
+                updates.hasBeenNamed = true;
+                if (readSessionNamingMode(currentSession.metadata) === 'card') {
+                    updates.metadata = { ...updates.metadata, [NAMING_MODE_METADATA_KEY]: 'custom' };
+                }
             }
             await AISessionsRepository.updateMetadata(sessionId, updates);
 

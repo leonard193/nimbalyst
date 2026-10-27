@@ -518,13 +518,14 @@ export class MessageStreamingHandler {
     const title = provisionalTitleForFirstMessage(session, message);
     if (title !== null) {
       // Without locking out auto-naming
-      await this.svc.sessionManager.updateSessionTitle(session.id, title, {
+      const applied = await this.svc.sessionManager.updateSessionTitle(session.id, title, {
         force: true,
         markAsNamed: false,
+        source: 'provisional',
       });
 
       // Keep session-history UI in sync with provisional title updates without forcing a full refresh.
-      for (const window of BrowserWindow.getAllWindows()) {
+      for (const window of applied === false ? [] : BrowserWindow.getAllWindows()) {
         if (!window.isDestroyed()) {
           window.webContents.send('sessions:session-updated', session.id, { title });
         }
