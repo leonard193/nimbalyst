@@ -39,6 +39,10 @@ import {
   type CardSessionIdentity,
   type SessionTitleSource,
 } from './cardSessionNaming';
+import {
+  CARD_NAMING_ADOPTION_METADATA_KEY,
+  type CardNamingAdoptionRecord,
+} from './cardNamingAdoption';
 
 /** Parsed tool_progress event from the agent stream */
 interface ToolProgressEvent {
@@ -1310,6 +1314,88 @@ export class SessionManager {
       };
     }
     return title;
+  }
+
+  /**
+   * Move an existing session into card naming, for a migration previewed
+   * earlier. Writes only when the stored title still equals `expectedTitle`
+   * and the session has no naming mode yet, so a rename made after the
+   * preview is never overwritten and a second run changes nothing. What it
+   * replaces is kept in metadata for `undoCardIdentityAdoption`.
+   */
+  async adoptCardIdentity(
+    sessionId: string,
+    identity: CardSessionIdentity,
+    options: { expectedTitle: string },
+  ): Promise<{ status: 'applied' | 'conflict' | 'already-adopted' | 'missing'; title?: string }> {
+    const persisted = await AISessionsRepository.get(sessionId);
+    if (!persisted) return { status: 'missing' };
+    if (readSessionNamingMode(persisted.metadata)) return { status: 'already-adopted', title: persisted.title };
+    if (persisted.title !== options.expectedTitle) return { status: 'conflict', title: persisted.title };
+    const title = buildCardSessionTitle(identity);
+    const record: CardNamingAdoptionRecord = {
+      previousTitle: persisted.title,
+      previousHasBeenNamed: !!persisted.hasBeenNamed,
+      adoptedTitle: title,
+      adoptedAt: Date.now(),
+    };
+    const naming = {
+      [NAMING_MODE_METADATA_KEY]: 'card',
+      [CARD_IDENTITY_METADATA_KEY]: identity,
+      [CARD_NAMING_ADOPTION_METADATA_KEY]: record,
+    };
+    await AISessionsRepository.updateMetadata(sessionId, {
+      title,
+      hasBeenNamed: true,
+      metadata: naming,
+    } as UpdateSessionMetadataPayload);
+    if (this.currentSession?.id === sessionId) {
+      this.currentSession = {
+        ...this.currentSession,
+        title,
+        hasBeenNamed: true,
+        metadata: { ...this.currentSession.metadata, ...naming },
+      };
+    }
+    return { status: 'applied', title };
+  }
+
+  /**
+   * Undo `adoptCardIdentity`: restore the previous title and named flag and
+   * clear the naming keys. Refuses when the title or mode changed since the
+   * adoption (a card retitle or a user rename), so later intent is not lost.
+   */
+  async undoCardIdentityAdoption(
+    sessionId: string,
+  ): Promise<{ status: 'restored' | 'conflict' | 'not-adopted' | 'missing'; title?: string }> {
+    const persisted = await AISessionsRepository.get(sessionId);
+    if (!persisted) return { status: 'missing' };
+    const metadata = (persisted.metadata ?? {}) as Record<string, unknown>;
+    const record = metadata[CARD_NAMING_ADOPTION_METADATA_KEY] as CardNamingAdoptionRecord | null | undefined;
+    if (!record || typeof record.previousTitle !== 'string') return { status: 'not-adopted', title: persisted.title };
+    if (readSessionNamingMode(persisted.metadata) !== 'card' || persisted.title !== record.adoptedTitle) {
+      return { status: 'conflict', title: persisted.title };
+    }
+    // Explicit nulls: the stores skip undefined, and a null mode reads as no mode.
+    const cleared = {
+      [NAMING_MODE_METADATA_KEY]: null,
+      [CARD_IDENTITY_METADATA_KEY]: null,
+      [CARD_NAMING_ADOPTION_METADATA_KEY]: null,
+    };
+    await AISessionsRepository.updateMetadata(sessionId, {
+      title: record.previousTitle,
+      hasBeenNamed: record.previousHasBeenNamed,
+      metadata: cleared,
+    } as UpdateSessionMetadataPayload);
+    if (this.currentSession?.id === sessionId) {
+      this.currentSession = {
+        ...this.currentSession,
+        title: record.previousTitle,
+        hasBeenNamed: record.previousHasBeenNamed,
+        metadata: { ...this.currentSession.metadata, ...cleared },
+      };
+    }
+    return { status: 'restored', title: record.previousTitle };
   }
 
   async updateSessionModel(sessionId: string, model: string): Promise<void> {

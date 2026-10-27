@@ -338,3 +338,34 @@ it('lists and searches sessions from projected metadata, never the whole blob', 
   expect(withMetadata.length).toBeGreaterThan(0);
   expect(withMetadata.some(row => JSON.stringify(row.metadata).includes('currentTasks'))).toBe(false);
 });
+
+// SYNTHETIC fixture. Undo clears the naming keys with explicit nulls, which
+// json_patch deletes on SQLite; the session must read as never adopted.
+it('adopts card naming and undoes it on SQLite without touching links, tags or transcript', async () => {
+  const { SessionManager } = await import('@nimbalyst/runtime/ai/server/SessionManager');
+  const store = createPGLiteSessionStore(sqlite);
+  const title = 'SYN-22 · SYNTHETIC adoption card — Implementation';
+  await store.create({ id: 'legacy', provider: 'claude-code', workspaceId: '/p', title, metadata: { linkedTrackerItemIds: ['card_22'], tags: ['feature'] } });
+  await store.updateMetadata('legacy', { hasBeenNamed: true } as any);
+  await sqlite.query(`INSERT INTO ai_agent_messages (session_id, source, direction, content) VALUES ('legacy', 'claude-code', 'input', 'hello')`);
+  vi.mocked(AISessionsRepository.get).mockImplementation(id => store.get(id));
+  vi.mocked(AISessionsRepository.updateMetadata).mockImplementation((id, patch) => store.updateMetadata(id, patch));
+  const manager = new SessionManager(store as any);
+  const identity = { primaryTrackerId: 'card_22', issueKey: 'SYN-22', cardTitle: 'SYNTHETIC adoption card', purpose: 'Implementation' };
+
+  expect(await manager.adoptCardIdentity('legacy', identity, { expectedTitle: title })).toEqual({ status: 'applied', title });
+  expect((await store.list('/p'))[0]).toMatchObject({ title, namingMode: 'card', cardIdentity: identity, linkedTrackerItemIds: ['card_22'], tags: ['feature'] });
+  expect(await manager.adoptCardIdentity('legacy', identity, { expectedTitle: title })).toMatchObject({ status: 'already-adopted' });
+
+  expect(await manager.undoCardIdentityAdoption('legacy')).toEqual({ status: 'restored', title });
+  const restored = await store.get('legacy');
+  expect(restored?.title).toBe(title);
+  expect(restored?.metadata).toMatchObject({ linkedTrackerItemIds: ['card_22'], tags: ['feature'] });
+  expect(restored?.metadata).not.toHaveProperty('namingMode');
+  expect(restored?.metadata).not.toHaveProperty('cardNamingAdoption');
+  const [listed] = await store.list('/p');
+  expect(listed.namingMode).toBeUndefined();
+  expect(listed.cardIdentity).toBeUndefined();
+  const { rows } = await sqlite.query<{ n: number }>(`SELECT COUNT(*) AS n FROM ai_agent_messages WHERE session_id = 'legacy'`);
+  expect(Number(rows[0].n)).toBe(1);
+});

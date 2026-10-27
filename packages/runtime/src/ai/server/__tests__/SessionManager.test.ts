@@ -388,3 +388,84 @@ describe('SessionManager card-linked naming', () => {
     expect(store.rows.get('s1')).toMatchObject({ title: 'User name', metadata: {} });
   });
 });
+
+describe('SessionManager card naming adoption', () => {
+  // SYNTHETIC fixtures: invented cards and sessions, not real chats.
+  const card = { primaryTrackerId: 'delivery-slice_syn', issueKey: 'SYN-22', cardTitle: 'SYNTHETIC adoption card' };
+  const title = 'SYN-22 · SYNTHETIC adoption card — Implementation';
+  const identity = { ...card, purpose: 'Implementation' };
+  const otherMetadata = { linkedTrackerItemIds: ['delivery-slice_syn', 'delivery-slice_other'], tags: ['feature'], phase: 'validating' };
+  let store: NamingSessionStore;
+  let manager: SessionManager;
+
+  beforeEach(async () => {
+    store = new NamingSessionStore();
+    manager = new SessionManager(store);
+    await manager.initialize();
+    await store.create({ id: 's1', provider: 'claude-code', model: 'claude-code:opus', title, workspaceId: 'ws', hasBeenNamed: true } as CreateSessionPayload);
+    store.rows.get('s1')!.metadata = { ...otherMetadata };
+    await store.appendMessage('s1', { id: 'm1', type: 'user_message', text: 'hello' } as unknown as TranscriptViewMessage);
+  });
+
+  it('adopts the card identity without changing the title, links, tags or transcript', async () => {
+    await expect(manager.adoptCardIdentity('s1', identity, { expectedTitle: title })).resolves.toEqual({ status: 'applied', title });
+
+    const row = store.rows.get('s1')!;
+    expect(row).toMatchObject({ title, hasBeenNamed: true, metadata: { ...otherMetadata, namingMode: 'card', cardIdentity: identity } });
+    expect(row.metadata.cardNamingAdoption).toMatchObject({ previousTitle: title, previousHasBeenNamed: true, adoptedTitle: title });
+    expect((await store.get('s1'))?.messages).toHaveLength(1);
+    // Now protected like a launched card chat.
+    await expect(manager.updateSessionTitle('s1', 'Agent summary', { force: true, markAsNamed: true, source: 'agent' })).resolves.toBe(false);
+  });
+
+  it('writes nothing when the title changed after the preview', async () => {
+    store.rows.get('s1')!.title = 'Renamed after preview';
+
+    await expect(manager.adoptCardIdentity('s1', identity, { expectedTitle: title })).resolves.toEqual({ status: 'conflict', title: 'Renamed after preview' });
+    expect(store.rows.get('s1')!.metadata).toEqual(otherMetadata);
+  });
+
+  it('changes nothing on a second run', async () => {
+    await manager.adoptCardIdentity('s1', identity, { expectedTitle: title });
+    const after = structuredClone(store.rows.get('s1'));
+    const update = vi.spyOn(store, 'updateMetadata');
+
+    await expect(manager.adoptCardIdentity('s1', identity, { expectedTitle: title })).resolves.toEqual({ status: 'already-adopted', title });
+    expect(update).not.toHaveBeenCalled();
+    expect(store.rows.get('s1')).toEqual(after);
+  });
+
+  it('records the old name when an approved adoption renumbers the purpose', async () => {
+    const renumbered = { ...card, purpose: 'Implementation 2' };
+
+    await expect(manager.adoptCardIdentity('s1', renumbered, { expectedTitle: title }))
+      .resolves.toEqual({ status: 'applied', title: 'SYN-22 · SYNTHETIC adoption card — Implementation 2' });
+    expect(store.rows.get('s1')!.metadata.cardNamingAdoption).toMatchObject({ previousTitle: title });
+  });
+
+  it('undoes an adoption back to the previous name and naming behavior', async () => {
+    await manager.adoptCardIdentity('s1', { ...card, purpose: 'Implementation 2' }, { expectedTitle: title });
+
+    await expect(manager.undoCardIdentityAdoption('s1')).resolves.toEqual({ status: 'restored', title });
+
+    const row = store.rows.get('s1')!;
+    expect(row).toMatchObject({ title, hasBeenNamed: true, metadata: { ...otherMetadata, namingMode: null, cardIdentity: null, cardNamingAdoption: null } });
+    expect((await store.get('s1'))?.messages).toHaveLength(1);
+    await expect(manager.undoCardIdentityAdoption('s1')).resolves.toEqual({ status: 'not-adopted', title });
+    // Back on the pre-adoption path: an agent may rename again.
+    await expect(manager.updateSessionTitle('s1', 'Agent summary', { force: true, markAsNamed: true, source: 'agent' })).resolves.toBe(true);
+  });
+
+  it('refuses to undo over a rename made after the adoption', async () => {
+    await manager.adoptCardIdentity('s1', identity, { expectedTitle: title });
+    await manager.updateSessionTitle('s1', 'My own name', { force: true, markAsNamed: true, source: 'user' });
+
+    await expect(manager.undoCardIdentityAdoption('s1')).resolves.toEqual({ status: 'conflict', title: 'My own name' });
+    expect(store.rows.get('s1')).toMatchObject({ title: 'My own name', metadata: { namingMode: 'custom' } });
+  });
+
+  it('reports a missing session', async () => {
+    await expect(manager.adoptCardIdentity('nope', identity, { expectedTitle: title })).resolves.toEqual({ status: 'missing' });
+    await expect(manager.undoCardIdentityAdoption('nope')).resolves.toEqual({ status: 'missing' });
+  });
+});
