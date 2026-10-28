@@ -90,13 +90,16 @@ export function getSessionIdentityDisplay(
   }
 
   const purpose = withoutSynthetic(clean(identity.purpose));
+  // The marker may sit in the card's own title (a SYNTHETIC test card), not
+  // only in the purpose; lift it from either so narrow views keep it.
+  const cardTitle = withoutSynthetic(clean(identity.cardTitle));
   return {
     kind: 'card',
-    title: clean(identity.cardTitle) || buildCardSessionBaseTitle(identity) || sessionTitle,
+    title: cardTitle.text || clean(identity.cardTitle) || buildCardSessionBaseTitle(identity) || sessionTitle,
     issueKey,
     primaryTrackerId: identity.primaryTrackerId,
     ...(purpose.text ? { purpose: purpose.text } : {}),
-    synthetic: purpose.synthetic,
+    synthetic: purpose.synthetic || cardTitle.synthetic,
     isCustomName: false,
     fullLabel: cardName,
   };

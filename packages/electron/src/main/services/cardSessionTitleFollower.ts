@@ -26,18 +26,59 @@ export const CARD_SESSIONS_QUERY = `SELECT id, metadata FROM ai_sessions WHERE m
 /** Sessions with a card identity, in card or custom naming mode, archived included. */
 export const NAMED_CARD_SESSIONS_QUERY = `SELECT id, metadata FROM ai_sessions WHERE metadata->>'namingMode' IN ('card', 'custom')`;
 
+/** How long a chosen purpose stays reserved if its session is never stored. */
+export const PURPOSE_RESERVATION_MS = 60_000;
+
+/** Purposes handed out but possibly not stored yet: card id -> session id -> reservation. */
+const purposeReservations = new Map<string, Map<string, { purpose: string; expiresAt: number }>>();
+const purposeQueues = new Map<string, Promise<unknown>>();
+
+function withCardPurposeLock<T>(primaryTrackerId: string, allocate: () => Promise<T>): Promise<T> {
+  const previous = purposeQueues.get(primaryTrackerId) ?? Promise.resolve();
+  const run = previous.then(allocate, allocate);
+  const settled = run.then(() => undefined, () => undefined);
+  purposeQueues.set(primaryTrackerId, settled);
+  void settled.then(() => {
+    if (purposeQueues.get(primaryTrackerId) === settled) purposeQueues.delete(primaryTrackerId);
+  });
+  return run;
+}
+
 /**
  * Give a launch a purpose no other chat on the same card uses, so two
  * launches from one card read `Implementation` and `Implementation 2`.
+ * Allocations for one card run one at a time, and each chosen purpose stays
+ * reserved until `releasePurposeReservation` (after the identity is stored)
+ * or `PURPOSE_RESERVATION_MS`, so simultaneous launches that read the same
+ * session list still get distinct purposes.
  */
 export async function numberRepeatedPurpose(
   sessionId: string,
   identity: CardSessionIdentity,
   listNamedCardSessions: () => Promise<Array<{ id: string; metadata: unknown }>>,
+  now: () => number = Date.now,
 ): Promise<CardSessionIdentity> {
-  const taken = purposesTakenOnCard(await listNamedCardSessions(), identity.primaryTrackerId, sessionId);
-  const purpose = nextAvailablePurpose(identity.purpose, taken);
-  return purpose === identity.purpose ? identity : { ...identity, purpose };
+  const cardId = identity.primaryTrackerId;
+  return withCardPurposeLock(cardId, async () => {
+    const taken = purposesTakenOnCard(await listNamedCardSessions(), cardId, sessionId);
+    const reserved = purposeReservations.get(cardId) ?? new Map<string, { purpose: string; expiresAt: number }>();
+    for (const [otherId, reservation] of reserved) {
+      if (reservation.expiresAt <= now()) reserved.delete(otherId);
+      else if (otherId !== sessionId) taken.push(reservation.purpose);
+    }
+    const purpose = nextAvailablePurpose(identity.purpose, taken);
+    reserved.set(sessionId, { purpose, expiresAt: now() + PURPOSE_RESERVATION_MS });
+    purposeReservations.set(cardId, reserved);
+    return purpose === identity.purpose ? identity : { ...identity, purpose };
+  });
+}
+
+/** Drop a session's purpose reservation once its identity is stored (or the write failed). */
+export function releasePurposeReservation(sessionId: string, primaryTrackerId: string): void {
+  const reserved = purposeReservations.get(primaryTrackerId);
+  if (!reserved) return;
+  reserved.delete(sessionId);
+  if (reserved.size === 0) purposeReservations.delete(primaryTrackerId);
 }
 
 export interface CardTrackerChange {
@@ -50,7 +91,16 @@ export interface CardTrackerChange {
 export interface CardSessionTitleFollowerDeps {
   /** Sessions in card naming mode; filtering by card happens here. */
   listCardSessions(): Promise<Array<{ id: string; metadata: unknown }>>;
-  setCardIdentity(sessionId: string, identity: CardSessionIdentity): Promise<string>;
+  /**
+   * Store the identity and write its title. Resolves null, writing nothing,
+   * when the session is custom-named or (with `expectedPrimaryTrackerId`) its
+   * primary card changed meanwhile.
+   */
+  setCardIdentity(
+    sessionId: string,
+    identity: CardSessionIdentity,
+    options?: { expectedPrimaryTrackerId?: string },
+  ): Promise<string | null>;
   /** Tell renderers the new title and the identity it was built from. */
   notifyTitle(sessionId: string, title: string, identity: CardSessionIdentity): void;
 }
@@ -99,7 +149,10 @@ export async function followCardChanges(
       next = nextCardIdentity(next, change) ?? next;
     }
     if (next === current) continue;
-    const title = await deps.setCardIdentity(session.id, next);
+    // The list is a snapshot: the user may have renamed the session or moved
+    // its primary card since. The write re-checks both and skips if so.
+    const title = await deps.setCardIdentity(session.id, next, { expectedPrimaryTrackerId: current.primaryTrackerId });
+    if (title === null) continue;
     deps.notifyTitle(session.id, title, next);
     retitled.push(session.id);
   }
@@ -139,7 +192,7 @@ export function notifyCardChanged(change: CardTrackerChange): void {
 
 export type SetPrimaryCardResult =
   | { applied: true; title: string }
-  | { applied: false; reason: 'unavailable' | 'other-primary-card'; primaryTrackerId?: string };
+  | { applied: false; reason: 'unavailable' | 'other-primary-card' | 'custom-name'; primaryTrackerId?: string };
 
 /**
  * Make `trackerId` the session's primary card with an explicit purpose. Used
@@ -159,6 +212,8 @@ export async function setPrimaryCard(
     return { applied: false, reason: 'other-primary-card', primaryTrackerId: current.primaryTrackerId };
   }
   const title = await deps.setCardIdentity(sessionId, identity);
+  // A user's custom name is kept: only the user switches it back to the card name.
+  if (title === null) return { applied: false, reason: 'custom-name' };
   deps.notifyTitle(sessionId, title, identity);
   return { applied: true, title };
 }

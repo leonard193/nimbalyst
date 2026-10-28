@@ -34,6 +34,7 @@ import {
   canWriteSessionTitle,
   CARD_IDENTITY_METADATA_KEY,
   NAMING_MODE_METADATA_KEY,
+  readCardSessionIdentity,
   readSessionNamingMode,
   userRenameMetadata,
   type CardSessionIdentity,
@@ -825,6 +826,37 @@ interface UpdateSessionTitleOptions {
   source?: SessionTitleSource;
 }
 
+export interface SetCardIdentityOptions {
+  /**
+   * `user` (the session's own UI) may switch a custom-named session back to
+   * its card name. Any other writer -- the card follower, an agent linking a
+   * card -- leaves a custom name alone. Defaults to `system`.
+   */
+  source?: SessionTitleSource;
+  /** Write only while the session's primary card is still this one. */
+  expectedPrimaryTrackerId?: string;
+}
+
+/**
+ * Naming writes for one session run one at a time. Each writer reads the
+ * stored naming state, decides, and writes; without this a user rename could
+ * land between another writer's read and its write and be overwritten.
+ * Module-level because the main process holds several SessionManager
+ * instances over the same store.
+ */
+const sessionNamingQueues = new Map<string, Promise<unknown>>();
+
+export function withSessionNamingLock<T>(sessionId: string, write: () => Promise<T>): Promise<T> {
+  const previous = sessionNamingQueues.get(sessionId) ?? Promise.resolve();
+  const run = previous.then(write, write);
+  const settled = run.then(() => undefined, () => undefined);
+  sessionNamingQueues.set(sessionId, settled);
+  void settled.then(() => {
+    if (sessionNamingQueues.get(sessionId) === settled) sessionNamingQueues.delete(sessionId);
+  });
+  return run;
+}
+
 export class SessionManager {
   private currentSession: SessionData | null = null;
   private currentWorkspacePath: string | null = null;
@@ -1250,6 +1282,10 @@ export class SessionManager {
    * writer is not the user.
    */
   async updateSessionTitle(sessionId: string, title: string, options?: UpdateSessionTitleOptions): Promise<boolean> {
+    return withSessionNamingLock(sessionId, () => this.writeSessionTitle(sessionId, title, options));
+  }
+
+  private async writeSessionTitle(sessionId: string, title: string, options?: UpdateSessionTitleOptions): Promise<boolean> {
     const source = options?.source ?? 'system';
     const persisted = await AISessionsRepository.get(sessionId);
     const namingMode = readSessionNamingMode(persisted?.metadata);
@@ -1287,11 +1323,33 @@ export class SessionManager {
   /**
    * Make a session's name follow a primary tracker card: store the identity
    * and naming mode in metadata and write the display title built from them.
-   * Also the way back to automatic naming after a custom rename. Marks the
-   * session named, so a call before the first turn keeps providers from
-   * self-naming.
+   * Also the way back to automatic naming after a custom rename, which only
+   * the user may ask for: any other writer gets null for a custom-named
+   * session and writes nothing. With `expectedPrimaryTrackerId`, also null
+   * once the primary card changed. Marks the session named, so a call before
+   * the first turn keeps providers from self-naming.
    */
-  async setCardIdentity(sessionId: string, identity: CardSessionIdentity): Promise<string> {
+  async setCardIdentity(
+    sessionId: string,
+    identity: CardSessionIdentity,
+    options?: SetCardIdentityOptions,
+  ): Promise<string | null> {
+    return withSessionNamingLock(sessionId, async () => {
+      if (options?.source !== 'user' || options.expectedPrimaryTrackerId) {
+        const persisted = await AISessionsRepository.get(sessionId);
+        if (options?.source !== 'user' && readSessionNamingMode(persisted?.metadata) === 'custom') return null;
+        if (
+          options?.expectedPrimaryTrackerId &&
+          readCardSessionIdentity(persisted?.metadata)?.primaryTrackerId !== options.expectedPrimaryTrackerId
+        ) {
+          return null;
+        }
+      }
+      return this.writeCardIdentity(sessionId, identity);
+    });
+  }
+
+  private async writeCardIdentity(sessionId: string, identity: CardSessionIdentity): Promise<string> {
     const title = buildCardSessionTitle(identity);
     await AISessionsRepository.updateMetadata(sessionId, {
       title,
@@ -1324,6 +1382,14 @@ export class SessionManager {
    * replaces is kept in metadata for `undoCardIdentityAdoption`.
    */
   async adoptCardIdentity(
+    sessionId: string,
+    identity: CardSessionIdentity,
+    options: { expectedTitle: string },
+  ): Promise<{ status: 'applied' | 'conflict' | 'already-adopted' | 'missing'; title?: string }> {
+    return withSessionNamingLock(sessionId, () => this.writeCardIdentityAdoption(sessionId, identity, options));
+  }
+
+  private async writeCardIdentityAdoption(
     sessionId: string,
     identity: CardSessionIdentity,
     options: { expectedTitle: string },
@@ -1366,6 +1432,12 @@ export class SessionManager {
    * adoption (a card retitle or a user rename), so later intent is not lost.
    */
   async undoCardIdentityAdoption(
+    sessionId: string,
+  ): Promise<{ status: 'restored' | 'conflict' | 'not-adopted' | 'missing'; title?: string }> {
+    return withSessionNamingLock(sessionId, () => this.writeCardIdentityUndo(sessionId));
+  }
+
+  private async writeCardIdentityUndo(
     sessionId: string,
   ): Promise<{ status: 'restored' | 'conflict' | 'not-adopted' | 'missing'; title?: string }> {
     const persisted = await AISessionsRepository.get(sessionId);

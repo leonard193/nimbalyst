@@ -353,7 +353,8 @@ describe('SessionManager card-linked naming', () => {
     await manager.setCardIdentity('s1', { ...card, purpose: 'Implementation' });
     await manager.updateSessionTitle('s1', 'My own name', { force: true, markAsNamed: true, source: 'user' });
 
-    await manager.setCardIdentity('s1', { ...card, purpose: 'Implementation' });
+    // Only the user switches a custom name back (the identity editor's request).
+    await manager.setCardIdentity('s1', { ...card, purpose: 'Implementation' }, { source: 'user' });
 
     expect(store.rows.get('s1')).toMatchObject({
       title: 'LEO-20 · Keep card-linked chat names correct automatically — Implementation',
@@ -467,5 +468,108 @@ describe('SessionManager card naming adoption', () => {
   it('reports a missing session', async () => {
     await expect(manager.adoptCardIdentity('nope', identity, { expectedTitle: title })).resolves.toEqual({ status: 'missing' });
     await expect(manager.undoCardIdentityAdoption('nope')).resolves.toEqual({ status: 'missing' });
+  });
+});
+
+/** Holds the next metadata write until released, to interleave a second writer. */
+class PausableNamingStore extends NamingSessionStore {
+  private hold: { reached: () => void; release: Promise<void> } | null = null;
+  private releaseHold: (() => void) | null = null;
+
+  /** The next updateMetadata stops before writing; resolves once it is held. */
+  pauseNextWrite(): Promise<void> {
+    return new Promise((reached) => {
+      const release = new Promise<void>((resolve) => { this.releaseHold = resolve; });
+      this.hold = { reached, release };
+    });
+  }
+
+  release(): void {
+    this.releaseHold?.();
+  }
+
+  async updateMetadata(sessionId: string, update: UpdateSessionMetadataPayload): Promise<void> {
+    const hold = this.hold;
+    if (hold) {
+      this.hold = null;
+      hold.reached();
+      await hold.release;
+    }
+    await super.updateMetadata(sessionId, update);
+  }
+}
+
+describe('SessionManager naming writes under concurrency', () => {
+  // SYNTHETIC fixtures: invented cards and sessions, not real chats.
+  const card = { primaryTrackerId: 'delivery-slice_syn', issueKey: 'SYN-23', cardTitle: 'SYNTHETIC concurrency card' };
+  const identity = { ...card, purpose: 'Implementation' };
+  const cardTitle = 'SYN-23 · SYNTHETIC concurrency card — Implementation';
+  let store: PausableNamingStore;
+  let manager: SessionManager;
+
+  beforeEach(async () => {
+    store = new PausableNamingStore();
+    manager = new SessionManager(store);
+    await manager.initialize();
+    await store.create({ id: 's1', provider: 'claude-code', model: 'claude-code:opus', title: 'Original', workspaceId: 'ws', hasBeenNamed: true } as CreateSessionPayload);
+  });
+
+  /** Start `rename` while another write is held, give it time to land, then release. */
+  async function renameDuringHeldWrite(held: Promise<unknown>, rename: () => Promise<unknown>): Promise<void> {
+    const pending = rename();
+    await Promise.race([pending, new Promise((resolve) => setTimeout(resolve, 50))]);
+    store.release();
+    await held;
+    await pending;
+  }
+
+  it('keeps a user rename that arrives while an adoption is writing', async () => {
+    const paused = store.pauseNextWrite();
+    const adoption = manager.adoptCardIdentity('s1', identity, { expectedTitle: 'Original' });
+    await paused;
+    await renameDuringHeldWrite(adoption, () => manager.updateSessionTitle('s1', 'Human custom name', { force: true, markAsNamed: true, source: 'user' }));
+
+    await expect(adoption).resolves.toEqual({ status: 'applied', title: cardTitle });
+    expect(store.rows.get('s1')).toMatchObject({ title: 'Human custom name', metadata: { namingMode: 'custom' } });
+  });
+
+  it('keeps a user rename that arrives while an undo is writing', async () => {
+    await manager.adoptCardIdentity('s1', identity, { expectedTitle: 'Original' });
+    const paused = store.pauseNextWrite();
+    const undo = manager.undoCardIdentityAdoption('s1');
+    await paused;
+    await renameDuringHeldWrite(undo, () => manager.updateSessionTitle('s1', 'Human custom name', { force: true, markAsNamed: true, source: 'user' }));
+
+    await expect(undo).resolves.toEqual({ status: 'restored', title: 'Original' });
+    expect(store.rows.get('s1')!.title).toBe('Human custom name');
+  });
+
+  it('keeps a user rename that arrives while an automatic retitle is writing', async () => {
+    await manager.setCardIdentity('s1', identity, { source: 'user' });
+    const paused = store.pauseNextWrite();
+    const retitle = manager.setCardIdentity('s1', { ...identity, cardTitle: 'Card renamed' }, { expectedPrimaryTrackerId: card.primaryTrackerId });
+    await paused;
+    await renameDuringHeldWrite(retitle, () => manager.updateSessionTitle('s1', 'Human custom name', { force: true, markAsNamed: true, source: 'user' }));
+
+    expect(store.rows.get('s1')).toMatchObject({ title: 'Human custom name', metadata: { namingMode: 'custom' } });
+  });
+
+  it('lets only the user switch a custom name back to the card name', async () => {
+    await manager.setCardIdentity('s1', identity, { source: 'user' });
+    await manager.updateSessionTitle('s1', 'Human custom name', { force: true, markAsNamed: true, source: 'user' });
+
+    await expect(manager.setCardIdentity('s1', { ...identity, cardTitle: 'Card renamed' })).resolves.toBeNull();
+    expect(store.rows.get('s1')).toMatchObject({ title: 'Human custom name', metadata: { namingMode: 'custom' } });
+
+    await expect(manager.setCardIdentity('s1', identity, { source: 'user' })).resolves.toBe(cardTitle);
+    expect(store.rows.get('s1')).toMatchObject({ title: cardTitle, metadata: { namingMode: 'card' } });
+  });
+
+  it('skips an automatic retitle once the primary card changed', async () => {
+    await manager.setCardIdentity('s1', { ...identity, primaryTrackerId: 'delivery-slice_other' }, { source: 'user' });
+    const before = store.rows.get('s1')!.title;
+
+    await expect(manager.setCardIdentity('s1', identity, { expectedPrimaryTrackerId: card.primaryTrackerId })).resolves.toBeNull();
+    expect(store.rows.get('s1')!.title).toBe(before);
   });
 });

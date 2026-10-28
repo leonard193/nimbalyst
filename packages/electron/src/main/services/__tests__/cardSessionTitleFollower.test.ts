@@ -7,6 +7,8 @@ import {
   CARD_SESSIONS_QUERY,
   NAMED_CARD_SESSIONS_QUERY,
   numberRepeatedPurpose,
+  PURPOSE_RESERVATION_MS,
+  releasePurposeReservation,
   followCardChanges,
   nextCardIdentity,
   type CardSessionTitleFollowerDeps,
@@ -150,5 +152,53 @@ describe('numberRepeatedPurpose on PGLite', () => {
     } finally {
       await pg.close();
     }
+  });
+});
+
+describe('followCardChanges when the session changed after the lookup', () => {
+  it('passes the looked-up primary card and does not announce a skipped write', async () => {
+    const { deps } = harness([{ id: 's1', metadata: { namingMode: 'card', cardIdentity: draft } }]);
+    // The session was renamed (or its primary card moved) after the lookup: the write is refused.
+    deps.setCardIdentity = vi.fn(async () => null);
+
+    await expect(followCardChanges([{ trackerIds: [draft.primaryTrackerId], title: 'Card renamed' }], deps)).resolves.toEqual([]);
+    expect(deps.setCardIdentity).toHaveBeenCalledWith('s1', expect.objectContaining({ cardTitle: 'Card renamed' }), {
+      expectedPrimaryTrackerId: draft.primaryTrackerId,
+    });
+    expect(deps.notifyTitle).not.toHaveBeenCalled();
+  });
+});
+
+describe('numberRepeatedPurpose with simultaneous launches', () => {
+  // SYNTHETIC card ids, distinct per test: reservations are module state.
+  const card = (id: string): CardSessionIdentity => ({ primaryTrackerId: id, cardTitle: 'SYNTHETIC launch card', purpose: 'Implementation' });
+  const nobodyStoredYet = async () => [];
+
+  it('gives launches that read the same list distinct purposes', async () => {
+    const identity = card('syn-simultaneous');
+    const purposes = (await Promise.all(['a', 'b', 'c'].map((id) => numberRepeatedPurpose(id, identity, nobodyStoredYet))))
+      .map((result) => result.purpose);
+
+    expect(purposes).toEqual(['Implementation', 'Implementation 2', 'Implementation 3']);
+    for (const id of ['a', 'b', 'c']) releasePurposeReservation(id, identity.primaryTrackerId);
+  });
+
+  it('keeps a session its own reservation when it asks again', async () => {
+    const identity = card('syn-repeat');
+    await numberRepeatedPurpose('a', identity, nobodyStoredYet);
+
+    expect((await numberRepeatedPurpose('a', identity, nobodyStoredYet)).purpose).toBe('Implementation');
+    releasePurposeReservation('a', identity.primaryTrackerId);
+  });
+
+  it('frees a purpose on release, or when an unstored reservation expires', async () => {
+    const identity = card('syn-release');
+    await numberRepeatedPurpose('a', identity, nobodyStoredYet);
+    releasePurposeReservation('a', identity.primaryTrackerId);
+    expect((await numberRepeatedPurpose('b', identity, nobodyStoredYet)).purpose).toBe('Implementation');
+
+    const later = () => Date.now() + PURPOSE_RESERVATION_MS + 1;
+    expect((await numberRepeatedPurpose('c', identity, nobodyStoredYet, later)).purpose).toBe('Implementation');
+    releasePurposeReservation('c', identity.primaryTrackerId);
   });
 });

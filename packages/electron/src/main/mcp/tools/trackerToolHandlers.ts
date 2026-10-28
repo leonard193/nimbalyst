@@ -3159,7 +3159,9 @@ export async function handleTrackerLinkSession(
           ? ` Session name now follows this card: "${primary.title}".`
           : primary.reason === "other-primary-card"
             ? ` Session name unchanged: its primary card is ${primary.primaryTrackerId}; only the user can change it.`
-            : " Session name unchanged: card naming is unavailable.";
+            : primary.reason === "custom-name"
+              ? " Session name unchanged: the user gave it a custom name; only the user can switch it back to the card name."
+              : " Session name unchanged: card naming is unavailable.";
       }
       const structured = {
         action: "linked" as const,

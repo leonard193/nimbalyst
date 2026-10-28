@@ -2,7 +2,7 @@ import { registerSessionPromptResponseHandler } from './sessionPromptResponseHan
 import { remoteSessions } from '../services/ai/remoteSessions';
 import { database } from '../database/PGLiteDatabaseWorker';
 import { projectSessionList, readSessionLaunchCounts } from './sessionListProjection';
-import { SessionManager, ProviderFactory } from '@nimbalyst/runtime/ai/server';
+import { SessionManager, ProviderFactory, withSessionNamingLock } from '@nimbalyst/runtime/ai/server';
 import { AISessionsRepository, TranscriptMigrationRepository } from '@nimbalyst/runtime';
 import { TranscriptProjector } from '@nimbalyst/runtime/ai/server/transcript';
 import {
@@ -39,6 +39,7 @@ import {
     NAMED_CARD_SESSIONS_QUERY,
     notifyCardChanged,
     numberRepeatedPurpose,
+    releasePurposeReservation,
     setCardSessionTitleFollowerDeps,
 } from '../services/cardSessionTitleFollower';
 import { setCardNamingAdoptionDeps } from '../services/cardNamingAdoptionService';
@@ -249,7 +250,7 @@ export async function registerSessionHandlers() {
             const { rows } = await database.query<{ id: string; metadata: unknown }>(CARD_SESSIONS_QUERY);
             return rows;
         },
-        setCardIdentity: (sessionId, identity) => sessionManager.setCardIdentity(sessionId, identity),
+        setCardIdentity: (sessionId, identity, options) => sessionManager.setCardIdentity(sessionId, identity, options),
         notifyTitle: (sessionId, title, identity) => notifyCardNamedSession(sessionId, title, identity),
     });
     // Existing sessions move into card naming only through the explicit adoption tool.
@@ -380,15 +381,22 @@ export async function registerSessionHandlers() {
     ) => {
         if (!sessionId) throw new Error('sessionId is required');
         let normalized = normalizeCardSessionIdentity(identity);
-        if (options?.numberRepeatedPurpose) {
-            normalized = await numberRepeatedPurpose(sessionId, normalized, async () => {
-                const { rows } = await database.query<{ id: string; metadata: unknown }>(NAMED_CARD_SESSIONS_QUERY);
-                return rows;
-            });
+        try {
+            if (options?.numberRepeatedPurpose) {
+                normalized = await numberRepeatedPurpose(sessionId, normalized, async () => {
+                    const { rows } = await database.query<{ id: string; metadata: unknown }>(NAMED_CARD_SESSIONS_QUERY);
+                    return rows;
+                });
+            }
+            // The session's own UI (launch, identity editor): a user request,
+            // so it may also switch a custom name back to the card name.
+            const title = await sessionManager.setCardIdentity(sessionId, normalized, { source: 'user' });
+            if (title === null) return { success: false, error: 'Session name was not changed' };
+            notifyCardNamedSession(sessionId, title, normalized);
+            return { success: true, title, cardIdentity: normalized };
+        } finally {
+            releasePurposeReservation(sessionId, normalized.primaryTrackerId);
         }
-        const title = await sessionManager.setCardIdentity(sessionId, normalized);
-        notifyCardNamedSession(sessionId, title, normalized);
-        return { success: true, title, cardIdentity: normalized };
     });
 
     // Update session model
@@ -458,15 +466,22 @@ export async function registerSessionHandlers() {
             if (updates.title !== undefined) {
                 // A rename from the session list or workstream header is a user
                 // rename: lock out auto-naming, and keep a card-named session's
-                // card identity while switching it to the custom name.
-                updates.hasBeenNamed = true;
-                const renameMetadata = userRenameMetadata(currentSession.metadata);
-                if (renameMetadata) {
-                    updates.metadata = { ...updates.metadata, ...renameMetadata };
-                    switchedToCustomName = true;
-                }
+                // card identity while switching it to the custom name. Read the
+                // naming state and write under the session's naming lock, so an
+                // automatic retitle cannot land in between and undo the rename.
+                await withSessionNamingLock(sessionId, async () => {
+                    const latest = await AISessionsRepository.get(sessionId);
+                    updates.hasBeenNamed = true;
+                    const renameMetadata = userRenameMetadata(latest?.metadata);
+                    if (renameMetadata) {
+                        updates.metadata = { ...updates.metadata, ...renameMetadata };
+                        switchedToCustomName = true;
+                    }
+                    await AISessionsRepository.updateMetadata(sessionId, updates);
+                });
+            } else {
+                await AISessionsRepository.updateMetadata(sessionId, updates);
             }
-            await AISessionsRepository.updateMetadata(sessionId, updates);
 
             if (updates.isArchived === true) {
                 const subtree = currentSession.workspacePath

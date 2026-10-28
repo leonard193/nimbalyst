@@ -49,6 +49,17 @@ describe('getSessionIdentityDisplay', () => {
     expect(display.fullLabel).toContain('SYNTHETIC Codex check');
   });
 
+  it('lifts SYNTHETIC out of the card title too, keeping the full name for screen readers', () => {
+    const display = getSessionIdentityDisplay({
+      title: 'SYN-1 · SYNTHETIC validation card — Implementation',
+      namingMode: 'card',
+      cardIdentity: { ...card, issueKey: 'SYN-1', cardTitle: 'SYNTHETIC validation card' },
+    });
+
+    expect(display).toMatchObject({ title: 'validation card', purpose: 'Implementation', synthetic: true });
+    expect(display.fullLabel).toBe('SYN-1 · SYNTHETIC validation card — Implementation');
+  });
+
   it('does not treat a word containing the marker as SYNTHETIC', () => {
     const display = getSessionIdentityDisplay({ title: 'x', namingMode: 'card', cardIdentity: { ...card, purpose: 'Unsynthetically tested' } });
     expect(display.synthetic).toBe(false);
