@@ -681,7 +681,7 @@ const WorkstreamHeader: React.FC<{
   }, [workstreamId, onArchiveStatusChange, updateSessionStore]);
 
   return (
-    <div className="workstream-header shrink-0 h-14 px-4 border-b border-[var(--nim-border)] bg-[var(--nim-bg)]">
+    <div className="workstream-header [container-type:inline-size] shrink-0 h-14 px-4 border-b border-[var(--nim-border)] bg-[var(--nim-bg)]">
       <div className="workstream-header-main flex items-center gap-3 h-full">
         <div className="workstream-header-icon shrink-0 text-[var(--nim-text-muted)]" title={getSessionTypeLabel()}>
           {worktreeId ? (
@@ -721,7 +721,7 @@ const WorkstreamHeader: React.FC<{
           <div className="workstream-header-meta-row flex items-center gap-1.5 w-full min-w-0">
             {worktreeChipName && (
               <span
-                className="workstream-header-worktree-chip shrink-0 flex items-center gap-1 max-w-[14rem] px-1.5 py-px rounded text-[0.625rem] font-medium text-[var(--nim-text-muted)] bg-[var(--nim-bg-secondary)] whitespace-nowrap overflow-hidden text-ellipsis"
+                className="workstream-header-worktree-chip min-w-0 flex items-center gap-1 max-w-[14rem] px-1.5 py-px rounded text-[0.625rem] font-medium text-[var(--nim-text-muted)] bg-[var(--nim-bg-secondary)] whitespace-nowrap overflow-hidden text-ellipsis"
                 title={worktreePath ? `Worktree: ${worktreeChipName}\n${worktreePath}` : `Worktree: ${worktreeChipName}`}
               >
                 <WorktreeIcon size={10} />
@@ -799,9 +799,10 @@ const WorkstreamHeader: React.FC<{
           className="workstream-archive-button flex items-center gap-1.5 h-8 px-2 rounded text-[var(--nim-text-faint)] text-[11px] font-medium cursor-pointer border-none bg-transparent hover:bg-[var(--nim-bg-hover)] hover:text-[var(--nim-text-muted)]"
           onClick={isArchived ? handleUnarchive : handleArchive}
           title={isArchived ? `Unarchive ${getSessionTypeLabel().toLowerCase()}` : `Archive ${getSessionTypeLabel().toLowerCase()}`}
+          aria-label={isArchived ? `Unarchive ${getSessionTypeLabel()}` : `Archive ${getSessionTypeLabel()}`}
         >
           <MaterialSymbol icon={isArchived ? 'unarchive' : 'archive'} size={18} />
-          <span>{isArchived ? `Unarchive ${getSessionTypeLabel()}` : `Archive ${getSessionTypeLabel()}`}</span>
+          <span className="workstream-archive-label">{isArchived ? `Unarchive ${getSessionTypeLabel()}` : `Archive ${getSessionTypeLabel()}`}</span>
         </button>
 
       </div>
